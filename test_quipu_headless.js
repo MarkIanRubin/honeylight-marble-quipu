@@ -1,86 +1,28 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Honeylight Marble Quipu — Snapshot System v4</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: #0a0d14; color: #cdd6e4;
-    font-family: 'SF Mono', Menlo, Consolas, monospace;
-    display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh; padding: 10px;
-  }
-  #wrap { width: 100%; max-width: 1440px; position: relative; }
-  canvas { width: 100%; display: block; border-radius: 10px; background: #05070b; }
-  #soundGate {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: rgba(5,7,11,.55); border-radius: 10px; cursor: pointer; z-index: 5;
-    flex-direction: column; gap: 8px;
-  }
-  #soundGate .big { font-size: 22px; color: #e8c56a; letter-spacing: 1px; }
-  #soundGate .small { font-size: 12px; color: #8fa3c4; }
-  #controls {
-    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-    margin-top: 10px; padding: 10px 14px;
-    background: #10151f; border: 1px solid #232c3d; border-radius: 10px;
-    font-size: 13px;
-  }
-  .btn {
-    background: #1a2233; color: #cdd6e4; border: 1px solid #2e3a52;
-    border-radius: 8px; padding: 8px 14px; cursor: pointer;
-    font-family: inherit; font-size: 13px; transition: all .15s;
-  }
-  .btn:hover { background: #243049; border-color: #4a5a7d; }
-  .btn.play { border-color: #2e7d4f; color: #7ee2a8; }
-  .btn.play.active { background: #12351f; }
-  .btn.bypass { border-color: #8d3a3a; color: #e88; }
-  .btn.bypass.active { background: #3a1414; }
-  .sep { width: 1px; height: 28px; background: #232c3d; }
-  .readout { color: #8fa3c4; font-size: 12px; line-height: 1.5; }
-  .readout b { color: #e8c56a; font-weight: 600; }
-  #status {
-    margin-top: 8px; font-size: 11px; color: #5c6c88; text-align: center;
-    letter-spacing: 0.4px;
-  }
-  kbd {
-    background: #1a2233; border: 1px solid #2e3a52; border-radius: 4px;
-    padding: 1px 5px; font-size: 10px; color: #9fb2d0;
-  }
-</style>
-</head>
-<body>
-<div id="wrap">
-  <canvas id="cv"></canvas>
-  <div id="soundGate">
-    <div class="big">🔊 CLICK TO START SOUND</div>
-    <div class="small">browsers require one click before audio can play — the quipu is ready</div>
-  </div>
-  <div id="controls">
-    <button class="btn play active" id="gateBtn">▶ GATE: PLAY</button>
-    <div class="sep"></div>
-    <button class="btn" id="ovfMinus">−</button>
-    <div class="readout">OVERFLOW WHEEL<br><b id="ovfReadout">1.0×</b></div>
-    <button class="btn" id="ovfPlus">+</button>
-    <div class="sep"></div>
-    <button class="btn" id="testBtn">🔔 TEST NOTES</button>
-    <button class="btn" id="pauseBtn">⏸ PAUSE</button>
-    <button class="btn" id="restartBtn">↺ RESTART</button>
-    <div class="sep"></div>
-    <div class="readout">LIFT <b>6 × da Vinci wheels · 4.05 ft</b> ·
-    ROUTER <b>holding bank + fast gate</b> · SUPPLY <b>28 = 110%</b> of max 25</div>
-    <div class="sep"></div>
-    <div class="readout" id="audioHint">🔇 sound off</div>
-  </div>
-  <div id="status">
-    <kbd>G</kbd> gate &nbsp; <kbd>−</kbd>/<kbd>+</kbd> overflow wheel rate &nbsp; <kbd>SPACE</kbd> pause &nbsp;
-    <kbd>R</kbd> restart &nbsp; <kbd>1–0</kbd> request lanes 1–10 through the gate &nbsp; <kbd>CLICK</kbd> a lane to request
-  </div>
-</div>
 
-<script>
+const steps = [];
+let rafCb = null;
+function stubCtx() {
+  return new Proxy({}, {
+    get(t, p) {
+      if (p === 'measureText') return () => ({ width: 10 });
+      if (p === 'createLinearGradient') return () => ({ addColorStop() {} });
+      return typeof t[p] !== 'undefined' ? t[p] : () => {};
+    },
+    set(t, p, v) { t[p] = v; return true; }
+  });
+}
+function stubEl() {
+  return { style: {}, textContent: '', className: '',
+    addEventListener() {}, onclick: null,
+    getContext: () => stubCtx(),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 940 }) };
+}
+global.document = { getElementById: () => stubEl(), addEventListener() {}, createElement: () => stubEl() };
+global.window = { devicePixelRatio: 1, addEventListener() {}, AudioContext: undefined, webkitAudioContext: undefined };
+global.performance = { now: () => nowMs };
+global.requestAnimationFrame = cb => { rafCb = cb; };
+let nowMs = 0;
+
 'use strict';
 /* ══════════════════════════════════════════════════════════════════
    HONEYLIGHT MARBLE QUIPU — Snapshot System (v4)
@@ -1152,6 +1094,25 @@ window.addEventListener('keydown', e => {
     if (lane < NUM_LANES) requestDrop(lane, true);
   }
 });
-</script>
-</body>
-</html>
+
+function drive(seconds) {
+  const dtMs = 1000 / 60;
+  let until = nowMs + seconds * 1000;
+  while (nowMs < until) { nowMs += dtMs; if (rafCb) { const cb = rafCb; rafCb = null; cb(nowMs); } }
+}
+const probe = tag => {
+  const { pe, ke } = currentTotals();
+  const diff = energyIn - energyOut - pe - ke - noteCount * HARVEST_J;
+  console.log(`${tag} t=${(songMs/1000).toFixed(1)}s total=${totalBalls()} bank=${bankBalls.length} notes=${noteCount} diff=${diff.toFixed(6)}`);
+};
+drive(14); probe('A');
+drive(14); probe('B');
+drive(14); probe('C');
+[1,3,5,7,8,9].forEach(l => requestDrop(l, true));
+drive(10); probe('D-burst6');
+drive(16); probe('E');
+// bypass cycle test
+setGate && setGate('bypass');
+drive(8); probe('F-bypass');
+setGate && setGate('play');
+drive(14); probe('G-play');
