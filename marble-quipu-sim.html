@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Honeylight Marble Quipu — Rubin Lifting Ramp Sim</title>
+<title>Honeylight Marble Quipu — da Vinci Lift Sim</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -69,7 +69,7 @@
     <button class="btn" id="pauseBtn">⏸ PAUSE</button>
     <button class="btn" id="restartBtn">↺ RESTART</button>
     <div class="sep"></div>
-    <div class="readout">LIFT MOTOR <b>0.25 HP · 132 RPM</b><br>
+    <div class="readout">LIFT <b>6 × da Vinci wheels · 15→54 RPM · 4.05 ft</b><br>
     INSTRUMENT <b>ALIENPAN · D Kurd · 10 notes</b> · SUPPLY <b>110%</b> of max</div>
     <div class="sep"></div>
     <div class="readout" id="audioHint">🔇 sound off</div>
@@ -83,20 +83,24 @@
 <script>
 'use strict';
 /* ══════════════════════════════════════════════════════════════════
-   HONEYLIGHT MARBLE QUIPU — full system simulator (v2)
-   Rubin Lifting Ramp (twin counter-rotating helixes) lifts golf balls
-   to the top of 10 lanes → balls fall → solenoid hammers strike an
-   ALIENPAN handpan (D Minor Kurd, 10 notes) → return tray routes
-   balls to the lift (PLAY gate) or the 1982 overflow machine (BYPASS).
+   HONEYLIGHT MARBLE QUIPU — full system simulator (v3)
+   v3: the lift is now a SERIES OF 6 LARGE-DIAMETER DA VINCI WHEELS
+   (Mark's direction, 2026-08-04). Each wheel lifts a golf ball 90%
+   of ½ its diameter: wheel Ø 18" → lift 8.1" per wheel → 6 × 8.1"
+   = 4.05 ft ≥ the 4 ft rise. Wheel centers are spaced 0.9R apart so
+   each wheel's release height equals the next wheel's entry height —
+   a seamless mechanical cascade.
 
-   v2 fixes per Mark 2026-08-04:
-   · overflow = the 1982 Rubin machine: 6-pocket wheel, counter-clock-
-     wise, two magnets, feed ramp entering at lower right
-   · ball supply is CONSERVED: exactly 28 balls = 110% of max demand
-     (25). Balls are never created; they only move between stages.
-   · hammer strikes are visible: solenoid plungers drive mallets onto
-     the handpan tone fields; each strike flashes the lane's LED color
-   · LED quipu bar + tone-field colors = Twilight Goat Pasture
+   Each lift wheel is mapped to a note of the ALIENPAN scale:
+   · rotational speed ∝ relative frequency — RPM_i = 15 × f_i / f_D3
+     (bottom wheel D3 @ 15 RPM … top wheel C5 @ 54 RPM)
+   · LED color-coded in its note's Twilight Goat Pasture color,
+     flashing on every ball handoff.
+
+   Rest unchanged from v2: balls fall down 10 lanes, solenoid hammers
+   strike the ALIENPAN, conserved supply of 28 balls (= 110% of max
+   demand 25) cycles through the return tray. BYPASS routes balls
+   through the 1982 Rubin overflow machine instead of striking.
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -109,33 +113,6 @@ function fit() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 fit(); window.addEventListener('resize', fit);
-
-// ── layout constants ─────────────────────────────────────────────
-const RAMP_W = 150, HEADER_H = 56, FOOTER_H = 96, INSTR_H = 88;
-const LANE_X = RAMP_W, LANE_Y = HEADER_H;
-const LANE_W_AREA = W - 2 * RAMP_W;
-const LANE_H = H - HEADER_H - FOOTER_H - INSTR_H;   // fall zone only
-const NUM_LANES = 10;
-const LANE_W = LANE_W_AREA / NUM_LANES;
-const BALL_R = 12;
-const INSTR_Y = LANE_Y + LANE_H;                     // instrument strip top
-const BALL_START_Y = LANE_Y + BALL_R + 4;
-const BALL_HIT_Y = INSTR_Y - BALL_R - 2;             // strike line
-const FALL_TIME = 0.65;
-const G_PX = 2 * (BALL_HIT_Y - BALL_START_Y) / (FALL_TIME * FALL_TIME);
-const HELIX_AMP = 42, HELIX_TURNS = 7, HELIX_SEGS = 120;
-const RAMP_TOP = LANE_Y + 8, RAMP_BOT = INSTR_Y + 10;
-const RAMP_HEIGHT = RAMP_BOT - RAMP_TOP;
-const LIFT_CX = RAMP_W / 2 + 4;
-const LIFT_SPEED = 1 / 1.35;                          // helix transit ≈1.35 s
-// ── the 1982 overflow machine (right column) ────────────────────
-const WHEEL_CX = W - RAMP_W / 2 - 4;
-const WHEEL_CY = RAMP_TOP + RAMP_HEIGHT * 0.40;
-const WHEEL_R = 62;
-const WHEEL_POCKETS = 6;
-const ENTRY_ANG = -0.72;                              // rad, lower-right feed
-const EXIT_ANG  = 2.35;                               // rad, upper-left eject
-const MAG_A = 2.6, MAG_B = -0.15;                     // magnet positions (rad)
 
 // ── ALIENPAN D Minor Kurd — 10 notes, 440 Hz ────────────────────
 const NOTES = [
@@ -150,10 +127,53 @@ const NOTES = [
   { name: 'A4',  freq: 440.00, col: [160, 170, 185] }, // Gunmetal Silver
   { name: 'C5',  freq: 523.25, col: [235, 225, 200] }, // Moonlit Cream
 ];
+
+// ── layout constants ─────────────────────────────────────────────
+const LEFT_W = 216, RIGHT_W = 150, HEADER_H = 56, FOOTER_H = 96, INSTR_H = 88;
+const LANE_X = LEFT_W, LANE_Y = HEADER_H;
+const LANE_W_AREA = W - LEFT_W - RIGHT_W;
+const LANE_H = H - HEADER_H - FOOTER_H - INSTR_H;   // fall zone only
+const NUM_LANES = 10;
+const LANE_W = LANE_W_AREA / NUM_LANES;
+const BALL_R = 12;
+const INSTR_Y = LANE_Y + LANE_H;                     // instrument strip top
+const BALL_HIT_Y = INSTR_Y - BALL_R - 2;             // strike line
+const FALL_TIME = 0.65;
 const laneCx = l => LANE_X + l * LANE_W + LANE_W / 2;
 
+// ── the 6 da Vinci lift wheels (left column) ────────────────────
+const N_WHEELS = 6;
+const LWR = 94;                                      // wheel radius (px) ≈ 9" → Ø 18"
+const LIFT_CX = LEFT_W / 2;
+const LIFT_FLOOR = INSTR_Y - 8;                      // wheel-0 bottom rests here
+const LIFT_ENTRY = Math.PI / 2;                      // canvas angle: bottom of wheel
+const LIFT_RELEASE = 0.10;                           // right side, just below hub height
+const LIFT_PER_WHEEL = 0.9 * LWR;                    // 90% of ½D = 0.9R
+const TOTAL_LIFT = N_WHEELS * LIFT_PER_WHEEL;        // 5.4R = 4.05 ft scale
+const WHEEL_D_IN = 18;                               // real wheel: Ø 18" → R 9"
+const LIFT_PER_WHEEL_IN = 0.9 * WHEEL_D_IN / 2;      // 8.1" real per wheel
+const TOTAL_LIFT_IN = N_WHEELS * LIFT_PER_WHEEL_IN;  // 48.6" = 4.05 ft
+const wheelCY = i => LIFT_FLOOR - LWR - i * LIFT_PER_WHEEL;
+// each wheel maps to a D-Kurd note: D3, Bb3, D4, F4, A4, C5
+const WHEEL_NOTE = [0, 2, 4, 6, 8, 9];
+const WHEEL_BASE_RPM = 15;
+const wheelRPM = i => WHEEL_BASE_RPM * NOTES[WHEEL_NOTE[i]].freq / NOTES[WHEEL_NOTE[0]].freq;
+const wheelOmega = i => wheelRPM(i) * 2 * Math.PI / 60;
+const BRIDGE_TIME = 0.45;
+const TOP_BRIDGE_Y = wheelCY(N_WHEELS - 1) + 0.1 * LWR;
+const BALL_START_Y = TOP_BRIDGE_Y + 18;              // hopper release height
+const G_PX = 2 * (BALL_HIT_Y - BALL_START_Y) / (FALL_TIME * FALL_TIME);
+
+// ── the 1982 overflow machine (right column) ────────────────────
+const WHEEL_CX = W - RIGHT_W / 2 - 4;
+const WHEEL_CY = LANE_Y + (INSTR_Y - LANE_Y) * 0.40;
+const WHEEL_R = 62;
+const WHEEL_POCKETS = 6;
+const ENTRY_ANG = -0.72;
+const EXIT_ANG  = 2.35;
+const MAG_A = 2.6, MAG_B = -0.15;
+
 // ── ball supply: conserved, 110% of max demand ──────────────────
-// max simultaneous demand ≈ 25 (fall 2 + hoppers 20 + tray 3)
 const MAX_DEMAND = 25;
 const SUPPLY = Math.ceil(MAX_DEMAND * 1.10);          // = 28
 const HOPPER_MAX = 2;
@@ -182,29 +202,34 @@ let paused = false;
 let audioOn = false;
 let songMs = -FALL_MS;
 let songIdx = 0;
-let phase = 0;
-let wheelAng = 0;
+let wheelAng1982 = 0;
 let noteCount = 0;
+const liftAng = new Array(N_WHEELS).fill(0);
+const liftGlow = new Array(N_WHEELS).fill(0);
 let fieldBalls = [];    // falling: {lane, x, y, vy}
-let liftBalls = [];     // on helix: {p, helix, lane}
-let hopper = [];        // per-lane queue at lane top
-let trayBalls = [];     // rolling on return tray: {x, tx, lane, t}
-let feedBalls = [];     // on the 1982 feed ramp: {t, lane}
-let wheelBalls = [];    // in wheel pockets: {ang, lane}
-let retBalls = [];      // on the return chute to lift base: {t, lane}
+let rideBalls = [];     // on a lift wheel: {wheel, ang, lane}
+let bridgeBalls = [];   // handoff bridge i (0..4) or top rail (5): {i, t, lane}
+let liftFeed = [];      // tray → wheel-0 entry ramp: {t, lane}
+let hopper = [];        // per-lane queue at top rail
+let trayBalls = [];     // rolling on return tray: {x, tx, lane, t, dest}
+let ovfFeed = [];       // tray → 1982 feed ramp: {t, lane}
+let wheelBalls = [];    // in 1982 wheel pockets: {ang, lane}
+let retBalls = [];      // 1982 eject → lift base chute: {t, lane}
 let hammerSwing = new Array(NUM_LANES).fill(0);
 let toneFlash = new Array(NUM_LANES).fill(0);
 let laneGlow = new Array(NUM_LANES).fill(0);
 let ripples = [];       // {lane, age}
 
 for (let i = 0; i < NUM_LANES; i++) hopper.push([]);
-// seed: 2 balls per hopper (20) + 8 on the lift = 28 = SUPPLY
+// seed the conserved supply: 20 in hoppers + 8 riding the lift wheels
 for (let i = 0; i < NUM_LANES; i++) for (let k = 0; k < HOPPER_MAX; k++) hopper[i].push({});
-for (let i = 0; i < 8; i++) liftBalls.push({ p: (i + 0.5) / 8, helix: i % 2, lane: (i * 3) % NUM_LANES });
+[[0,1.30],[0,0.55],[1,1.10],[2,0.80],[3,1.25],[3,0.40],[4,0.95],[5,0.65]].forEach(([w, a], i) =>
+  rideBalls.push({ wheel: w, ang: a, lane: (i * 3 + 1) % NUM_LANES }));
 
 function totalBalls() {
-  return fieldBalls.length + liftBalls.length + trayBalls.length + feedBalls.length +
-         wheelBalls.length + retBalls.length + hopper.reduce((s, h) => s + h.length, 0);
+  return fieldBalls.length + rideBalls.length + bridgeBalls.length + liftFeed.length +
+         trayBalls.length + ovfFeed.length + wheelBalls.length + retBalls.length +
+         hopper.reduce((s, h) => s + h.length, 0);
 }
 
 function resetSong() {
@@ -229,7 +254,7 @@ function initAudio() {
   if (sg) sg.style.display = 'none';
 }
 document.getElementById('soundGate').addEventListener('pointerdown', initAudio);
-document.addEventListener('pointerdown', e => { if (!audioOn) initAudio(); });
+document.addEventListener('pointerdown', () => { if (!audioOn) initAudio(); });
 document.addEventListener('keydown', () => { if (!audioOn) initAudio(); });
 
 function playHandpan(freq) {
@@ -273,14 +298,17 @@ function dropBall(lane) {
   return true;
 }
 
-// ── paths ────────────────────────────────────────────────────────
+// ── path geometry ────────────────────────────────────────────────
 const TRAY_Y = INSTR_Y + INSTR_H - 20;
-const FEED_P0 = [LANE_X + LANE_W_AREA - 8, TRAY_Y];              // tray right end
-const FEED_P1 = [WHEEL_CX + WHEEL_R * Math.cos(ENTRY_ANG), WHEEL_CY + WHEEL_R * Math.sin(ENTRY_ANG)];
+const FEED1982_P0 = [LANE_X + LANE_W_AREA - 8, TRAY_Y];
+const FEED1982_P1 = [WHEEL_CX + WHEEL_R * Math.cos(ENTRY_ANG), WHEEL_CY + WHEEL_R * Math.sin(ENTRY_ANG)];
 const EJECT_PT = [WHEEL_CX + WHEEL_R * Math.cos(EXIT_ANG), WHEEL_CY + WHEEL_R * Math.sin(EXIT_ANG)];
 const RET_P0 = EJECT_PT;
-const RET_P1 = [WHEEL_CX - WHEEL_R - 26, WHEEL_CY + WHEEL_R + 34];
-const RET_P2 = [LIFT_CX + HELIX_AMP + 20, RAMP_BOT - 6];
+const RET_P1 = [WHEEL_CX - WHEEL_R - 30, WHEEL_CY + WHEEL_R + 40];
+const RET_P2 = [LIFT_CX + LWR + 26, wheelCY(0) + 0.1 * LWR];
+// tray → wheel-0 entry ramp
+const LFEED_P0 = [LANE_X + 10, TRAY_Y];
+const LFEED_P1 = [LIFT_CX + LWR * 0.55, wheelCY(0) + LWR - 4];
 
 function bez3(a, b, c, t) {
   const u = 1 - t;
@@ -290,15 +318,18 @@ function bez3(a, b, c, t) {
 
 function step(dt) {
   songMs += dt * 1000;
-  phase += 45 * 2 * Math.PI / 60 * dt;
-  wheelAng += ovfRate * 45 * 2 * Math.PI / 60 * dt;
+  wheelAng1982 += ovfRate * 45 * 2 * Math.PI / 60 * dt;
+  for (let i = 0; i < N_WHEELS; i++) {
+    liftAng[i] -= wheelOmega(i) * dt;   // CCW on screen
+    liftGlow[i] = Math.max(0, liftGlow[i] - dt * 2.4);
+  }
 
   // schedule song drops (deferred until a ball is available in the hopper)
   while (songIdx < SONG.events.length) {
     const [lane, st] = SONG.events[songIdx];
     if (songMs >= st - FALL_MS) {
       if (dropBall(lane)) songIdx++;
-      else if (songMs > st + 260) songIdx++;   // give up after 260 ms
+      else if (songMs > st + 260) songIdx++;
       break;
     } else break;
   }
@@ -314,7 +345,7 @@ function step(dt) {
       } else {
         laneGlow[b.lane] = Math.max(laneGlow[b.lane], 0.25);
         noteCount++;
-        trayBalls.push({ x: b.x, tx: FEED_P0[0], lane: b.lane, t: 0, dest: 'wheel' });
+        trayBalls.push({ x: b.x, tx: FEED1982_P0[0], lane: b.lane, t: 0, dest: 'wheel' });
       }
     } else survivors.push(b);
   }
@@ -326,22 +357,59 @@ function step(dt) {
     b.t += dt / 0.55;
     b.x += (b.tx - b.x) * Math.min(1, dt * 6);
     if (b.t >= 1) {
-      if (b.dest === 'lift') liftBalls.push({ p: 0, helix: noteCount % 2, lane: b.lane });
-      else feedBalls.push({ t: 0, lane: b.lane });
+      if (b.dest === 'lift') liftFeed.push({ t: 0, lane: b.lane });
+      else ovfFeed.push({ t: 0, lane: b.lane });
     } else trayLeft.push(b);
   }
   trayBalls = trayLeft;
 
-  // feed ramp → wheel pocket
-  const feedLeft = [];
-  for (const b of feedBalls) {
+  // tray → wheel-0 entry ramp
+  const lfLeft = [];
+  for (const b of liftFeed) {
+    b.t += dt / 0.5;
+    if (b.t >= 1) { rideBalls.push({ wheel: 0, ang: LIFT_ENTRY, lane: b.lane }); liftGlow[0] = 1; }
+    else lfLeft.push(b);
+  }
+  liftFeed = lfLeft;
+
+  // da Vinci lift wheels: carry CCW from entry (bottom) to release (right)
+  const rideLeft = [];
+  for (const b of rideBalls) {
+    b.ang -= wheelOmega(b.wheel) * dt;
+    if (b.ang <= LIFT_RELEASE) {
+      liftGlow[b.wheel] = 1;
+      bridgeBalls.push({ i: b.wheel, t: 0, lane: b.lane });
+    } else rideLeft.push(b);
+  }
+  rideBalls = rideLeft;
+
+  // bridges 0..4: wheel i release → wheel i+1 entry; bridge 5: top rail → hopper
+  const brLeft = [];
+  for (const b of bridgeBalls) {
+    b.t += dt / BRIDGE_TIME;
+    if (b.t >= 1) {
+      if (b.i < N_WHEELS - 1) {
+        rideBalls.push({ wheel: b.i + 1, ang: LIFT_ENTRY, lane: b.lane });
+        liftGlow[b.i + 1] = Math.max(liftGlow[b.i + 1], 0.7);
+      } else if (hopper[b.lane].length < HOPPER_MAX) {
+        hopper[b.lane].push({});
+      } else {
+        ovfFeed.push({ t: 0, lane: b.lane });   // true overflow → 1982 machine
+      }
+    } else brLeft.push(b);
+  }
+  bridgeBalls = brLeft;
+
+  // tray → 1982 feed ramp
+  const ofLeft = [];
+  for (const b of ovfFeed) {
     b.t += dt / 0.5;
     if (b.t >= 1) wheelBalls.push({ ang: ENTRY_ANG, lane: b.lane });
-    else feedLeft.push(b);
+    else ofLeft.push(b);
   }
-  feedBalls = feedLeft;
+  ovfFeed = ofLeft;
 
-  // 1982 wheel: carry CCW from entry to eject
+  // 1982 wheel: carry from entry to eject
   const wSpeed = ovfRate * 45 * 2 * Math.PI / 60;
   const wheelLeft = [];
   for (const b of wheelBalls) {
@@ -351,26 +419,14 @@ function step(dt) {
   }
   wheelBalls = wheelLeft;
 
-  // return chute → lift base
+  // 1982 eject → lift base chute → wheel 0
   const retLeft = [];
   for (const b of retBalls) {
     b.t += dt / 0.8;
-    if (b.t >= 1) liftBalls.push({ p: 0, helix: (noteCount + b.lane) % 2, lane: b.lane });
+    if (b.t >= 1) { rideBalls.push({ wheel: 0, ang: LIFT_ENTRY, lane: b.lane }); liftGlow[0] = 1; }
     else retLeft.push(b);
   }
   retBalls = retLeft;
-
-  // lift: carry balls up
-  const up = LIFT_SPEED * dt;
-  const stillLifting = [];
-  for (const b of liftBalls) {
-    b.p += up;
-    if (b.p >= 1.0) {
-      if (hopper[b.lane].length < HOPPER_MAX) hopper[b.lane].push({});
-      else feedBalls.push({ t: 0, lane: b.lane });   // true overflow → 1982 wheel
-    } else stillLifting.push(b);
-  }
-  liftBalls = stillLifting;
 
   // decay visuals
   for (let i = 0; i < NUM_LANES; i++) {
@@ -392,62 +448,128 @@ function drawBall(x, y, col, r) {
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
 }
 
-function drawHelix(cx, balls, label) {
-  const cols = [[70, 150, 255], [255, 165, 50]];
-  const dims = [[18, 38, 65], [65, 42, 13]];
-  for (let hx = 0; hx < 2; hx++) {
-    const pts = [];
-    for (let si = 0; si <= HELIX_SEGS; si++) {
-      const p = si / HELIX_SEGS;
-      let ang = p * HELIX_TURNS * 2 * Math.PI + phase;
-      if (hx === 1) ang = -(p * HELIX_TURNS * 2 * Math.PI + phase) + Math.PI;
-      pts.push([cx + HELIX_AMP * Math.sin(ang), RAMP_BOT - p * RAMP_HEIGHT, Math.cos(ang)]);
-    }
-    for (const front of [false, true]) {
-      ctx.lineWidth = front ? 3 : 1.2;
-      ctx.strokeStyle = rgb(front ? cols[hx] : dims[hx]);
-      ctx.beginPath();
-      let started = false;
-      for (const pt of pts) {
-        if ((pt[2] > 0) === front) {
-          if (!started) { ctx.moveTo(pt[0], pt[1]); started = true; }
-          else ctx.lineTo(pt[0], pt[1]);
-        } else started = false;
-      }
-      ctx.stroke();
-    }
-  }
-  for (const b of balls) {
-    let ang = b.p * HELIX_TURNS * 2 * Math.PI + phase;
-    if (b.helix === 1) ang = -(b.p * HELIX_TURNS * 2 * Math.PI + phase) + Math.PI;
-    const bx = cx + HELIX_AMP * Math.sin(ang);
-    const by = RAMP_BOT - b.p * RAMP_HEIGHT;
-    if (Math.cos(ang) < -0.4) continue;
-    drawBall(bx, by, NOTES[b.lane].col, Math.max(5, BALL_R * 0.62 + Math.cos(ang) * 3.5));
-  }
-  const my = RAMP_BOT + 26;
-  ctx.beginPath(); ctx.arc(cx, my, 16, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = '#34425a'; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, my);
-  ctx.lineTo(cx + 12 * Math.cos(phase), my + 12 * Math.sin(phase));
-  ctx.strokeStyle = '#5aaaff'; ctx.lineWidth = 3; ctx.stroke();
-  ctx.font = '10px monospace'; ctx.fillStyle = '#5f7396'; ctx.textAlign = 'center';
-  ctx.fillText(label, cx, my + 30);
+function ballOnLiftWheel(b) {
+  const cx = LIFT_CX, cy = wheelCY(b.wheel);
+  const r = LWR - BALL_R * 0.4;
+  return [cx + r * Math.cos(b.ang), cy + r * Math.sin(b.ang)];
 }
 
-function drawWheel() {
+function drawLiftWheel(i) {
+  const cx = LIFT_CX, cy = wheelCY(i), R = LWR;
+  const note = NOTES[WHEEL_NOTE[i]];
+  const c = note.col;
+  const glow = liftGlow[i];
+  // stand post
+  ctx.strokeStyle = '#1c2430'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + R + 6); ctx.stroke();
+  // wheel disc
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7);
+  ctx.fillStyle = 'rgba(16,21,31,.88)'; ctx.fill();
+  // LED rim — the note color, bright on handoff
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = rgb(c.map(v => Math.max(18, v * 0.16)));
+  ctx.stroke();
+  if (glow > 0.02) {
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7);
+    ctx.strokeStyle = rgb(c, Math.min(1, glow)); ctx.lineWidth = 3.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R + 6, 0, 7);
+    ctx.strokeStyle = rgb(c, glow * 0.35); ctx.lineWidth = 5; ctx.stroke();
+  }
+  // six curved pocket blades (da Vinci spiral)
+  for (let k = 0; k < 6; k++) {
+    const a0 = liftAng[i] + k * Math.PI / 3;
+    ctx.beginPath();
+    for (let s = 0; s <= 18; s++) {
+      const t = s / 18;
+      const a = a0 + t * 0.85;
+      const r = R * 0.22 + t * R * 0.72;
+      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = glow > 0.05 ? rgb(c, 0.35 + glow * 0.4) : '#3c4a66';
+    ctx.lineWidth = 2; ctx.stroke();
+  }
+  // spokes + rim pockets
+  for (let k = 0; k < 6; k++) {
+    const a = liftAng[i] + k * Math.PI / 3;
+    ctx.beginPath(); ctx.moveTo(cx + R * 0.18 * Math.cos(a), cy + R * 0.18 * Math.sin(a));
+    ctx.lineTo(cx + R * 0.97 * Math.cos(a), cy + R * 0.97 * Math.sin(a));
+    ctx.strokeStyle = '#2c3a52'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + (R - 7) * Math.cos(a), cy + (R - 7) * Math.sin(a), 8, 0, 7);
+    ctx.strokeStyle = '#2c3a52'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  // hub with rotation marker
+  ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
+  ctx.strokeStyle = rgb(c, 0.5 + glow * 0.5); ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + 9 * Math.cos(liftAng[i]), cy + 9 * Math.sin(liftAng[i]));
+  ctx.strokeStyle = rgb(c); ctx.lineWidth = 2.5; ctx.stroke();
+  // LED label: note · RPM (frequency mapping)
+  ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+  ctx.fillStyle = rgb(c, 0.55 + glow * 0.45);
+  ctx.fillText(note.name, cx, cy + 3.5);
+  ctx.font = '9px monospace'; ctx.fillStyle = '#5c6c88';
+  ctx.fillText(`${wheelRPM(i).toFixed(0)} RPM`, cx, cy + R + 16);
+}
+
+function drawLiftColumn() {
+  // handoff bridges: wheel i release → wheel i+1 entry (same height)
+  for (let i = 0; i < N_WHEELS - 1; i++) {
+    const y = wheelCY(i) + 0.1 * LWR;
+    ctx.strokeStyle = '#54432a'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(LIFT_CX + LWR + 8, y); ctx.lineTo(LIFT_CX + 4, y); ctx.stroke();
+    ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(LIFT_CX + LWR + 8, y - 3.5); ctx.lineTo(LIFT_CX + 4, y - 3.5); ctx.stroke();
+  }
+  // top distribution rail: wheel-5 release → lane hoppers
+  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(LIFT_CX + LWR + 8, TOP_BRIDGE_Y);
+  ctx.lineTo(LANE_X + LANE_W_AREA, TOP_BRIDGE_Y); ctx.stroke();
+  ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(LIFT_CX + LWR + 8, TOP_BRIDGE_Y - 3.5);
+  ctx.lineTo(LANE_X + LANE_W_AREA, TOP_BRIDGE_Y - 3.5); ctx.stroke();
+  // tray → wheel-0 feed ramp
+  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(LFEED_P0[0], LFEED_P0[1]); ctx.lineTo(LFEED_P1[0], LFEED_P1[1]); ctx.stroke();
+  for (const b of liftFeed) {
+    const x = LFEED_P0[0] + (LFEED_P1[0] - LFEED_P0[0]) * b.t;
+    const y = LFEED_P0[1] + (LFEED_P1[1] - LFEED_P0[1]) * b.t - 7;
+    drawBall(x, y, NOTES[b.lane].col, 9);
+  }
+  // the six wheels
+  for (let i = 0; i < N_WHEELS; i++) drawLiftWheel(i);
+  // balls riding wheels
+  for (const b of rideBalls) {
+    const [x, y] = ballOnLiftWheel(b);
+    drawBall(x, y, NOTES[b.lane].col, 9.5);
+  }
+  // balls on bridges / top rail
+  for (const b of bridgeBalls) {
+    if (b.i < N_WHEELS - 1) {
+      const y = wheelCY(b.i) + 0.1 * LWR;
+      const x = LIFT_CX + LWR + 8 - b.t * (LWR + 4);
+      drawBall(x, y - 7, NOTES[b.lane].col, 9);
+    } else {
+      const x0 = LIFT_CX + LWR + 8;
+      const x = x0 + b.t * (laneCx(b.lane) - x0);
+      drawBall(x, TOP_BRIDGE_Y - 7, NOTES[b.lane].col, 9);
+    }
+  }
+  ctx.font = '9px monospace'; ctx.fillStyle = '#8a7340'; ctx.textAlign = 'center';
+  ctx.fillText('DA VINCI LIFT — 6 WHEELS', LIFT_CX, INSTR_Y + 14);
+  ctx.fillText(`each lifts 90% of ½D · ${LIFT_PER_WHEEL_IN}" × ${N_WHEELS} = ${TOTAL_LIFT_IN}" (4.05 ft)`, LIFT_CX, INSTR_Y + 26);
+}
+
+function drawWheel1982() {
   const cx = WHEEL_CX, cy = WHEEL_CY, R = WHEEL_R;
-  // stand
   ctx.strokeStyle = '#232c3d'; ctx.lineWidth = 5;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, RAMP_BOT); ctx.stroke();
-  ctx.fillStyle = '#1a2233'; ctx.fillRect(cx - 26, RAMP_BOT - 4, 52, 8);
-  // wheel rim
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, INSTR_Y - 4); ctx.stroke();
+  ctx.fillStyle = '#1a2233'; ctx.fillRect(cx - 26, INSTR_Y - 8, 52, 8);
   ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7);
   ctx.fillStyle = 'rgba(16,21,31,.85)'; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = '#3a4a64'; ctx.stroke();
-  // six curved pocket segments (spiral blades)
   for (let k = 0; k < WHEEL_POCKETS; k++) {
-    const a0 = wheelAng + k * Math.PI * 2 / WHEEL_POCKETS;
+    const a0 = wheelAng1982 + k * Math.PI * 2 / WHEEL_POCKETS;
     ctx.beginPath();
     for (let s = 0; s <= 20; s++) {
       const t = s / 20;
@@ -458,20 +580,17 @@ function drawWheel() {
     }
     ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
   }
-  // spokes
   for (let k = 0; k < WHEEL_POCKETS; k++) {
-    const a = wheelAng + k * Math.PI * 2 / WHEEL_POCKETS;
+    const a = wheelAng1982 + k * Math.PI * 2 / WHEEL_POCKETS;
     ctx.beginPath(); ctx.moveTo(cx + R * 0.2 * Math.cos(a), cy + R * 0.2 * Math.sin(a));
     ctx.lineTo(cx + R * 0.97 * Math.cos(a), cy + R * 0.97 * Math.sin(a));
     ctx.strokeStyle = '#2c3a52'; ctx.lineWidth = 1.5; ctx.stroke();
   }
-  // hub with rotation marker
   ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
   ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + 9 * Math.cos(wheelAng), cy + 9 * Math.sin(wheelAng));
+  ctx.lineTo(cx + 9 * Math.cos(wheelAng1982), cy + 9 * Math.sin(wheelAng1982));
   ctx.strokeStyle = '#ffa050'; ctx.lineWidth = 2.5; ctx.stroke();
-  // CCW motion arrow
   ctx.beginPath(); ctx.arc(cx, cy, R + 14, -0.4, -1.6, true);
   ctx.strokeStyle = 'rgba(232,197,106,.5)'; ctx.lineWidth = 2; ctx.stroke();
   const ah = -1.6;
@@ -480,7 +599,6 @@ function drawWheel() {
   ctx.lineTo(cx + (R + 20) * Math.cos(ah - 0.18), cy + (R + 20) * Math.sin(ah - 0.18));
   ctx.lineTo(cx + (R + 8) * Math.cos(ah - 0.22), cy + (R + 8) * Math.sin(ah - 0.22));
   ctx.closePath(); ctx.fillStyle = 'rgba(232,197,106,.6)'; ctx.fill();
-  // two magnets with red force arrows (as drawn in 1982)
   for (const ma of [MAG_A, MAG_B]) {
     const mx = cx + (R + 26) * Math.cos(ma), myy = cy + (R + 26) * Math.sin(ma);
     ctx.save(); ctx.translate(mx, myy); ctx.rotate(ma + Math.PI / 2);
@@ -492,22 +610,19 @@ function drawWheel() {
     ctx.beginPath(); ctx.moveTo(mx, myy);
     ctx.lineTo(cx + (R + 6) * Math.cos(ma), cy + (R + 6) * Math.sin(ma)); ctx.stroke();
   }
-  // pocket balls
   for (const b of wheelBalls) {
     const r = R * 0.28 + ((b.ang - ENTRY_ANG) / (EXIT_ANG - ENTRY_ANG)) * R * 0.6;
     drawBall(cx + r * Math.cos(b.ang), cy + r * Math.sin(b.ang), NOTES[b.lane].col, 9);
   }
-  // feed ramp (tray → lower-right of wheel)
   ctx.strokeStyle = '#54432a'; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(FEED_P0[0], FEED_P0[1]); ctx.lineTo(FEED_P1[0], FEED_P1[1]); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(FEED1982_P0[0], FEED1982_P0[1]); ctx.lineTo(FEED1982_P1[0], FEED1982_P1[1]); ctx.stroke();
   ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(FEED_P0[0], FEED_P0[1] - 4); ctx.lineTo(FEED_P1[0], FEED_P1[1] - 4); ctx.stroke();
-  for (const b of feedBalls) {
-    const x = FEED_P0[0] + (FEED_P1[0] - FEED_P0[0]) * b.t;
-    const y = FEED_P0[1] + (FEED_P1[1] - FEED_P0[1]) * b.t - 7;
+  ctx.beginPath(); ctx.moveTo(FEED1982_P0[0], FEED1982_P0[1] - 4); ctx.lineTo(FEED1982_P1[0], FEED1982_P1[1] - 4); ctx.stroke();
+  for (const b of ovfFeed) {
+    const x = FEED1982_P0[0] + (FEED1982_P1[0] - FEED1982_P0[0]) * b.t;
+    const y = FEED1982_P0[1] + (FEED1982_P1[1] - FEED1982_P0[1]) * b.t - 7;
     drawBall(x, y, NOTES[b.lane].col, 9);
   }
-  // return chute (eject → lift base)
   ctx.strokeStyle = '#54432a'; ctx.lineWidth = 5;
   ctx.beginPath();
   for (let s = 0; s <= 24; s++) {
@@ -520,8 +635,8 @@ function drawWheel() {
     drawBall(p[0], p[1] - 6, NOTES[b.lane].col, 9);
   }
   ctx.font = '9px monospace'; ctx.fillStyle = '#8a7340'; ctx.textAlign = 'center';
-  ctx.fillText('RUBIN 1982', cx, RAMP_BOT + 14);
-  ctx.fillText('OVERFLOW MACHINE', cx, RAMP_BOT + 26);
+  ctx.fillText('RUBIN 1982', cx, INSTR_Y + 14);
+  ctx.fillText('OVERFLOW MACHINE', cx, INSTR_Y + 26);
   ctx.fillStyle = '#5c6c88';
   ctx.fillText(`${(ovfRate * 45).toFixed(0)} RPM`, cx, cy + 4);
 }
@@ -531,9 +646,9 @@ function draw() {
 
   // header
   ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#8c9ebe'; ctx.textAlign = 'left';
-  ctx.fillText('HONEYLIGHT MARBLE QUIPU  ·  Rubin Lifting Ramp  ·  10 lanes  ·  0.25 HP  ·  ALIENPAN D Kurd', 12, 22);
+  ctx.fillText('HONEYLIGHT MARBLE QUIPU  ·  da Vinci Lift  ·  10 lanes  ·  ALIENPAN D Kurd', 12, 22);
   ctx.font = '11px monospace'; ctx.fillStyle = '#5c6c88';
-  ctx.fillText(`golf balls · twin helix lift · gate control · 1982 overflow wheel · supply ${SUPPLY} = 110% of max ${MAX_DEMAND}`, 12, 38);
+  ctx.fillText(`golf balls · 6 da Vinci wheels (each lifts 90% of ½D) · RPM ∝ note frequency · LED color-coded · supply ${SUPPLY} = 110% of max ${MAX_DEMAND}`, 12, 38);
   const pct = Math.min(1, Math.max(0, songMs / SONG.totalMs));
   ctx.fillStyle = '#101620'; ctx.fillRect(LANE_X, 46, LANE_W_AREA, 3);
   ctx.fillStyle = '#327dc3'; ctx.fillRect(LANE_X, 46, LANE_W_AREA * pct, 3);
@@ -557,7 +672,7 @@ function draw() {
     ctx.fillText(NOTES[i].name, cx, cy + 3);
   }
 
-  // lane frame + dividers + glow wash
+  // lane frame + dividers + glow wash + hoppers
   ctx.strokeStyle = '#1c2430'; ctx.lineWidth = 2;
   ctx.strokeRect(LANE_X, LANE_Y, LANE_W_AREA, LANE_H);
   for (let i = 0; i < NUM_LANES; i++) {
@@ -568,23 +683,19 @@ function draw() {
       ctx.fillStyle = rgb(NOTES[i].col, laneGlow[i] * 0.07);
       ctx.fillRect(lx + 1, LANE_Y, LANE_W - 2, LANE_H - 4);
     }
-    // hopper dots at lane top
     for (let k = 0; k < hopper[i].length; k++) {
-      ctx.beginPath(); ctx.arc(laneCx(i), LANE_Y + 12 + k * 13, 5.5, 0, 7);
+      ctx.beginPath(); ctx.arc(laneCx(i), BALL_START_Y - 8 + k * 13, 5.5, 0, 7);
       ctx.fillStyle = rgb(NOTES[i].col, 0.85); ctx.fill();
       ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
     }
   }
 
-  // lift ramp (left)
-  drawHelix(LIFT_CX, liftBalls, 'LIFT ↑ 132 RPM');
-  // 1982 overflow machine (right)
-  drawWheel();
+  drawLiftColumn();
+  drawWheel1982();
 
   // ── instrument strip: the ALIENPAN ─────────────────────────────
   ctx.fillStyle = '#161210';
   ctx.beginPath(); ctx.roundRect(LANE_X - 6, INSTR_Y, LANE_W_AREA + 12, INSTR_H, 8); ctx.fill();
-  // bronze dome sheen
   const grad = ctx.createLinearGradient(0, INSTR_Y, 0, INSTR_Y + INSTR_H);
   grad.addColorStop(0, 'rgba(120,84,40,.28)');
   grad.addColorStop(0.5, 'rgba(70,50,26,.12)');
@@ -599,39 +710,30 @@ function draw() {
   const FIELD_Y = INSTR_Y + 54;
   for (let i = 0; i < NUM_LANES; i++) {
     const cx = laneCx(i), c = NOTES[i].col;
-    // tone field (handpan note ellipse)
     ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, LANE_W * 0.34, 13, 0, 0, 7);
     ctx.fillStyle = toneFlash[i] > 0.02 ? rgb(c, 0.25 + toneFlash[i] * 0.75) : '#241c12';
     ctx.fill();
     ctx.strokeStyle = toneFlash[i] > 0.02 ? rgb(c) : '#4a3a24'; ctx.lineWidth = 1.5; ctx.stroke();
-    // dimple
     ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, 4, 2.4, 0, 0, 7);
     ctx.fillStyle = toneFlash[i] > 0.02 ? '#fff' : '#120d08'; ctx.fill();
-    // strike ripple
     for (const r of ripples) if (r.lane === i) {
       const rr = 8 + r.age * 46;
       ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, rr, rr * 0.42, 0, 0, 7);
       ctx.strokeStyle = rgb(c, Math.max(0, 0.8 - r.age * 1.3)); ctx.lineWidth = 2; ctx.stroke();
     }
-    // hammer: solenoid housing + plunger + mallet
     const swing = hammerSwing[i];
-    // swing decays 1→0 after strike; mallet fully extended at impact (swing=1),
-    // spring-returns as swing decays
     const plunge = Math.pow(swing, 0.6) * 16;
     const hy = INSTR_Y + 8;
     ctx.fillStyle = '#2a303a';
     ctx.beginPath(); ctx.roundRect(cx - 9, hy, 18, 14, 3); ctx.fill();
     ctx.strokeStyle = swing > 0.05 ? rgb(c) : '#3a4352'; ctx.lineWidth = 1;
     ctx.strokeRect(cx - 9, hy, 18, 14);
-    // plunger rod
     ctx.strokeStyle = '#8a95a5'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(cx, hy + 14); ctx.lineTo(cx, hy + 18 + plunge); ctx.stroke();
-    // mallet head
     const mY = hy + 22 + plunge;
     ctx.beginPath(); ctx.arc(cx, mY, 6, 0, 7);
     ctx.fillStyle = swing > 0.05 ? rgb(c) : '#586270'; ctx.fill();
     ctx.strokeStyle = '#14181f'; ctx.lineWidth = 1; ctx.stroke();
-    // impact flash
     if (swing > 0.55) {
       ctx.beginPath(); ctx.arc(cx, FIELD_Y - 6, 10, 0, 7);
       ctx.fillStyle = rgb(c, (swing - 0.55) * 1.4); ctx.fill();
@@ -646,7 +748,7 @@ function draw() {
   ctx.font = '10px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = gate === 'play' ? '#4caf7d' : '#e07070';
   ctx.fillText(gate === 'play'
-    ? '◀ PLAY: strike → tray → lift (closed loop)'
+    ? '◀ PLAY: strike → tray → da Vinci lift (closed loop)'
     : 'BYPASS: pass-through → tray → 1982 wheel → lift ▶',
     LANE_X + LANE_W_AREA / 2, TRAY_Y + 20);
   for (const b of trayBalls) drawBall(b.x, TRAY_Y - 6, NOTES[b.lane].col, 9);
@@ -661,7 +763,7 @@ function draw() {
     ['MODE', gate === 'play' ? 'instrument live' : 'direct to 1982 wheel'],
     ['NOTES', String(noteCount)],
     ['IN FLIGHT', String(fieldBalls.length)],
-    ['LIFT', String(liftBalls.length)],
+    ['ON LIFT', String(rideBalls.length + bridgeBalls.length + liftFeed.length)],
     ['HOPPERS', String(hopper.reduce((s, h) => s + h.length, 0))],
     ['1982 WHEEL', `${(ovfRate * 45).toFixed(0)} RPM · ${wheelBalls.length}`],
     ['SUPPLY', `${tot}/${SUPPLY} (110%)`],
@@ -717,9 +819,7 @@ cv.addEventListener('pointerdown', e => {
   const y = (e.clientY - rect.top) * (H / rect.height);
   if (x > LANE_X && x < LANE_X + LANE_W_AREA && y > LANE_Y && y < INSTR_Y) {
     const lane = Math.min(NUM_LANES - 1, Math.floor((x - LANE_X) / LANE_W));
-    if (!dropBall(lane)) {
-      laneGlow[lane] = Math.max(laneGlow[lane], 0.2); // hopper empty — dim blink
-    }
+    if (!dropBall(lane)) laneGlow[lane] = Math.max(laneGlow[lane], 0.2);
   }
 });
 
