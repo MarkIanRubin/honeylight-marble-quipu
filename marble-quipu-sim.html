@@ -185,8 +185,11 @@
    note); How many shows quantities of value as a time-sequential
    animated gear train (size = count, speed = frequency).
    · FOUR SEASONS dropdown: Spring / Summer / Autumn / Winter, each
-   arranged for D Kurd; the DISPATCH LED strip on the right scrolls
-   one block per ball at the drop schedule — color = note to play.
+   arranged for D Kurd; the DISPATCH LCD strip on the right is a real
+   time axis — block height = time to next drop, the sample raster
+   scrolls at the sampling rate (4 samples/beat = snapshot frequency,
+   locked to tempo), and the flashing cursor marks the block the AI
+   camera reads next to trigger the drop.
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -362,7 +365,13 @@ function buildSeasonSong(key) {
   const ev = mel.map(([n, q]) => [n, q * qn]);
   for (const [n, q] of bass) ev.push([n, q * qn]);
   ev.sort((a, b) => a[1] - b[1]);
-  return { events: ev, totalMs: beats * qn + 1500, key };
+  // tempo-locked sampling: the AI camera reads the LCD at 4 samples
+  // per beat — snapshot frequency IS the tempo. Quantization error on
+  // a drop command ≤ one 16th note, centered by the half-sample bias.
+  const bpm = 60000 / qn;
+  const samplePeriod = qn / 4;
+  return { events: ev, totalMs: beats * qn + 1500, key,
+           qn, bpm, samplePeriod, sampleHz: 1000 / samplePeriod };
 }
 let SONG = buildSeasonSong('spring');
 let currentSeason = 'spring';
@@ -381,6 +390,9 @@ let accDispatch = 0, accStrike = 0;                   // decaying flow drivers
 let flashBeam = 0;                                    // camera → gate flash
 let camFlash = 0;
 let ledFlash = 0;                                     // dispatch LED read-line flash
+let samplePhase = 0;                                  // AI camera sample clock (ms)
+let sampleFlash = 0;                                  // pulses on every sample tick
+let lcdReadQueue = [];                                // drops awaiting the next sample read
 const liftAng = new Array(N_WHEELS).fill(0);
 const liftGlow = new Array(N_WHEELS).fill(0);
 
@@ -428,6 +440,7 @@ function resetSong() {
   money = 0; flowers = 0; energyIn = 0; energyOut = 0;
   accDispatch = 0; accStrike = 0;
   dropLog = [];
+  samplePhase = 0; sampleFlash = 0; lcdReadQueue = [];
   fieldBalls = []; bounceBalls = []; dropBalls = []; rollBalls = [];
   rideBalls = []; bridgeBalls = []; liftFeed = [];
   dispatchQueue = []; gateState.pending = null;
@@ -583,11 +596,27 @@ function step(dt) {
   camFlash = Math.max(0, camFlash - dt * 3);
   ledFlash = Math.max(0, ledFlash - dt * 2.5);
 
-  // schedule song notes through the gate router
+  // schedule song notes into the LCD read queue; the AI camera
+  // dispatches them on its next sample tick (tempo-locked sampling)
   while (songIdx < SONG.events.length) {
     const [lane, st] = SONG.events[songIdx];
-    if (songMs >= st - FALL_MS - GATE_LEAD) { requestDrop(lane, false); songIdx++; }
-    else break;
+    const dropAt = st - FALL_MS - GATE_LEAD;
+    if (songMs >= dropAt - SONG.samplePeriod / 2) {     // half-sample bias centers the error
+      lcdReadQueue.push({ lane, dropAt });
+      songIdx++;
+    } else break;
+  }
+  // the AI sample clock — snapshot frequency = 4 samples per beat.
+  // Every tick the camera reads the LCD and triggers every drop that
+  // has reached the read line. Quantization error ≤ half a sample.
+  samplePhase += dt * 1000;
+  sampleFlash = Math.max(0, sampleFlash - dt * 6);
+  while (samplePhase >= SONG.samplePeriod) {
+    samplePhase -= SONG.samplePeriod;
+    sampleFlash = 1;
+    while (lcdReadQueue.length && lcdReadQueue[0].dropAt <= songMs) {
+      requestDrop(lcdReadQueue.shift().lane, false);    // the LCD just told the machine
+    }
   }
 
   stepGateAndBank(dt);
@@ -1092,17 +1121,22 @@ function drawLedger() {
   ctx.fillText('potential energy at the top of the tank → motion → sound → money → flowers', gx0 + 84, y0 + 78);
 }
 
-// ── dispatch LED strip (right column): one block per ball, ──────
-// scrolling at the correct speed — the strip IS the note schedule.
-// Each block reaches the read line exactly when the gate must drop
-// its ball. Color = note, so the machine sees which ball to play.
+// ── dispatch LCD (right column): one block per ball on a real ──
+// time axis. HEIGHT = time until the next drop; the sample raster
+// scrolls at the sampling rate, which is locked to the tempo (4
+// samples per beat). The flashing cursor block marks the note the
+// AI camera must read NEXT to trigger its drop — it blinks at the
+// snapshot frequency. Color = note, so the machine sees which ball.
 const LED_X0 = W - RIGHT_W + 8;
 const LED_X1 = W - 8;
 const LED_TOP = 70, LED_BOT = 738;
 const LED_READ_Y = 716;                                 // the read line
 const LED_PX_PER_MS = 0.09;                             // scroll speed: 90 px/s
+const yOfDrop = t => LED_READ_Y - (t - songMs) * LED_PX_PER_MS;
 function drawLedStrip() {
   const cx = (LED_X0 + LED_X1) / 2, bw = LED_X1 - LED_X0 - 14;
+  const dropLead = FALL_MS + GATE_LEAD;
+  const dropTimes = SONG.events.map(([l, st]) => st - dropLead);
   // strip body
   ctx.fillStyle = '#0a0f16';
   ctx.beginPath(); ctx.roundRect(LED_X0, LED_TOP, LED_X1 - LED_X0, LED_BOT - LED_TOP, 6); ctx.fill();
@@ -1110,40 +1144,82 @@ function drawLedStrip() {
   ctx.stroke();
   ctx.font = '10px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = '#8c9ebe';
-  ctx.fillText('DISPATCH LED', cx, LED_TOP - 10);
+  ctx.fillText('DISPATCH LCD', cx, LED_TOP - 10);
   ctx.font = '8px monospace'; ctx.fillStyle = '#4a5a70';
-  ctx.fillText('one block per ball', cx, LED_TOP - 0);
-  ctx.fillText('scroll speed = drop schedule', cx, LED_BOT + 12);
-  // read line — flashes when the strip tells the machine to drop
+  ctx.fillText('block height = time to next drop', cx, LED_TOP - 0);
+  ctx.fillText(`${SONG.bpm.toFixed(0)} BPM · sample ${SONG.sampleHz.toFixed(2)} Hz`, cx, LED_BOT + 12);
+  ctx.fillText('(4 samples/beat)', cx, LED_BOT + 22);
+
+  // clip everything to the strip
+  ctx.save();
+  ctx.beginPath(); ctx.rect(LED_X0 + 2, LED_TOP + 2, LED_X1 - LED_X0 - 4, LED_BOT - LED_TOP - 4); ctx.clip();
+
+  // ── the sample raster: one line per AI camera sample, scrolling.
+  // Tempo made visible: summer's grid is twice as dense as winter's.
+  const sp = SONG.samplePeriod;
+  const phase0 = ((songMs % sp) + sp) % sp;
+  ctx.lineWidth = 1;
+  for (let y = LED_READ_Y + phase0 * LED_PX_PER_MS; y > LED_TOP; y -= sp * LED_PX_PER_MS) {
+    ctx.strokeStyle = 'rgba(60,80,110,0.30)';
+    ctx.beginPath(); ctx.moveTo(LED_X0 + 4, y); ctx.lineTo(LED_X1 - 4, y); ctx.stroke();
+  }
+  for (let y = LED_READ_Y + phase0 * LED_PX_PER_MS; y < LED_BOT; y += sp * LED_PX_PER_MS) {
+    ctx.strokeStyle = 'rgba(60,80,110,0.30)';
+    ctx.beginPath(); ctx.moveTo(LED_X0 + 4, y); ctx.lineTo(LED_X1 - 4, y); ctx.stroke();
+  }
+
+  // ── next-to-read index: the block the AI must sample next ──
+  let nextIdx = -1;
+  for (let i = 0; i < SONG.events.length; i++) {
+    if (dropTimes[i] > songMs) { nextIdx = i; break; }
+  }
+
+  // ── the blocks: top edge = drop command time, height = interval ──
+  for (let i = 0; i < SONG.events.length; i++) {
+    const [lane] = SONG.events[i];
+    const y = yOfDrop(dropTimes[i]);                    // top edge = drop time
+    const interval = (i + 1 < SONG.events.length ? dropTimes[i + 1] - dropTimes[i] : sp);
+    const bh = Math.max(8, Math.min(44, interval * LED_PX_PER_MS));
+    if (y - bh > LED_BOT + 8 || y < LED_TOP - bh) continue;
+    const c = NOTES[lane].col;
+    const played = y > LED_READ_Y + 2;
+    const a = played ? Math.max(0, 1 - (y - LED_READ_Y) / 90) * 0.35 : 0.95;
+    if (a <= 0.02) continue;
+    ctx.fillStyle = rgb(c, a);
+    ctx.beginPath(); ctx.roundRect(cx - bw / 2, y - bh, bw, bh - 2, 3); ctx.fill();
+    if (!played) {
+      ctx.strokeStyle = rgb(c, 0.9); ctx.lineWidth = 1; ctx.stroke();
+      if (bh >= 13) {
+        ctx.font = '9px monospace'; ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(8,10,14,${Math.min(1, a + 0.15)})`;
+        ctx.fillText(`${i + 1} · ${NOTES[lane].name}`, cx, y - bh / 2 + 3);
+      }
+    }
+    // ── the flashing cursor: the block the AI reads on its next
+    // sample tick. Blink rate = snapshot frequency (sample clock).
+    if (i === nextIdx) {
+      const blink = 0.45 + 0.55 * (samplePhase / sp);   // ramp within each sample window
+      const glow = Math.max(blink, sampleFlash);
+      ctx.strokeStyle = `rgba(232,197,106,${glow})`;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(cx - bw / 2 - 3, y - bh - 3, bw + 6, bh + 4);
+      ctx.font = '8px monospace'; ctx.textAlign = 'left';
+      ctx.fillStyle = `rgba(232,197,106,${glow})`;
+      ctx.fillText('◄ AI READ', LED_X0 + 4, y - bh / 2);
+    }
+  }
+  ctx.restore();
+
+  // read line — flashes gold when a sample tick fires a real drop
   const rf = 0.35 + ledFlash * 0.65;
   ctx.strokeStyle = `rgba(232,197,106,${rf})`; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(LED_X0 + 4, LED_READ_Y); ctx.lineTo(LED_X1 - 4, LED_READ_Y); ctx.stroke();
   ctx.font = '8px monospace'; ctx.fillStyle = `rgba(232,197,106,${rf})`; ctx.textAlign = 'left';
   ctx.fillText('READ → DROP', LED_X0 + 6, LED_READ_Y - 5);
-  // clip blocks to the strip
-  ctx.save();
-  ctx.beginPath(); ctx.rect(LED_X0 + 2, LED_TOP + 2, LED_X1 - LED_X0 - 4, LED_BOT - LED_TOP - 4); ctx.clip();
-  const bh = 20;                                        // one block per ball
-  const dropLead = FALL_MS + GATE_LEAD;                 // the gate commands the drop this far before the note sounds
-  for (let i = 0; i < SONG.events.length; i++) {
-    const [lane, st] = SONG.events[i];
-    const dropAt = st - dropLead;                       // when the machine must drop this ball
-    const y = LED_READ_Y - (dropAt - songMs) * LED_PX_PER_MS;
-    if (y < LED_TOP - bh || y > LED_BOT + bh) continue;
-    const c = NOTES[lane].col;
-    const played = y > LED_READ_Y + bh / 2;
-    const a = played ? Math.max(0, 1 - (y - LED_READ_Y) / 90) * 0.35 : 0.95;
-    if (a <= 0.02) continue;
-    ctx.fillStyle = rgb(c, a);
-    ctx.beginPath(); ctx.roundRect(cx - bw / 2, y - bh / 2, bw, bh - 3, 4); ctx.fill();
-    if (!played) {
-      ctx.strokeStyle = rgb(c, 0.9); ctx.lineWidth = 1; ctx.stroke();
-      ctx.font = '9px monospace'; ctx.textAlign = 'center';
-      ctx.fillStyle = `rgba(8,10,14,${Math.min(1, a + 0.15)})`;
-      ctx.fillText(`${i + 1} · ${NOTES[lane].name}`, cx, y + 4);
-    }
-  }
-  ctx.restore();
+  // sample-clock pip: pulses at the snapshot frequency
+  const pipR = 3 + sampleFlash * 3;
+  ctx.beginPath(); ctx.arc(LED_X1 - 12, LED_READ_Y, pipR, 0, 7);
+  ctx.fillStyle = `rgba(232,197,106,${0.4 + sampleFlash * 0.6})`; ctx.fill();
 }
 
 function draw() {
