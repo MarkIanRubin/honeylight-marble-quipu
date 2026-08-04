@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Honeylight Marble Quipu — Rubin Lifting Ramp Sim</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0d14; color: #cdd6e4;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 10px;
+  }
+  #wrap { width: 100%; max-width: 1440px; }
+  canvas { width: 100%; display: block; border-radius: 10px; background: #05070b; }
+  #controls {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin-top: 10px; padding: 10px 14px;
+    background: #10151f; border: 1px solid #232c3d; border-radius: 10px;
+    font-size: 13px;
+  }
+  .btn {
+    background: #1a2233; color: #cdd6e4; border: 1px solid #2e3a52;
+    border-radius: 8px; padding: 8px 14px; cursor: pointer;
+    font-family: inherit; font-size: 13px; transition: all .15s;
+  }
+  .btn:hover { background: #243049; border-color: #4a5a7d; }
+  .btn.play { border-color: #2e7d4f; color: #7ee2a8; }
+  .btn.play.active { background: #12351f; }
+  .btn.bypass { border-color: #8d3a3a; color: #e88; }
+  .btn.bypass.active { background: #3a1414; }
+  .sep { width: 1px; height: 28px; background: #232c3d; }
+  .readout { color: #8fa3c4; font-size: 12px; line-height: 1.5; }
+  .readout b { color: #e8c56a; font-weight: 600; }
+  #status {
+    margin-top: 8px; font-size: 11px; color: #5c6c88; text-align: center;
+    letter-spacing: 0.4px;
+  }
+  kbd {
+    background: #1a2233; border: 1px solid #2e3a52; border-radius: 4px;
+    padding: 1px 5px; font-size: 10px; color: #9fb2d0;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="controls">
+    <button class="btn play active" id="gateBtn">▶ GATE: PLAY</button>
+    <div class="sep"></div>
+    <button class="btn" id="ovfMinus">−</button>
+    <div class="readout">OVERFLOW<br><b id="ovfReadout">1.0×</b></div>
+    <button class="btn" id="ovfPlus">+</button>
+    <div class="sep"></div>
+    <button class="btn" id="pauseBtn">⏸ PAUSE</button>
+    <button class="btn" id="restartBtn">↺ RESTART</button>
+    <div class="sep"></div>
+    <div class="readout">LIFT MOTOR <b>0.25 HP · 132 RPM</b> · 10% surplus<br>
+    INSTRUMENT <b>ALIENPAN · D Kurd · 10 notes</b></div>
+    <div class="sep"></div>
+    <div class="readout" id="audioHint">🔇 click anywhere to enable sound</div>
+  </div>
+  <div id="status">
+    <kbd>G</kbd> gate &nbsp; <kbd>−</kbd>/<kbd>+</kbd> overflow rate &nbsp; <kbd>SPACE</kbd> pause &nbsp;
+    <kbd>R</kbd> restart &nbsp; <kbd>1–0</kbd> drop lanes 1–10 &nbsp; <kbd>CLICK</kbd> lane to drop
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ══════════════════════════════════════════════════════════════════
+   HONEYLIGHT MARBLE QUIPU — full system simulator
+   Rubin Lifting Ramp (double counter-rotating helix) lifts golf balls
+   5 ft to the top of 10 lanes → balls fall → solenoid hammers strike
+   an ALIENPAN handpan (D Minor Kurd, 10 notes) → return tray routes
+   balls to the lift (PLAY gate) or the overflow ramp (BYPASS gate).
+   The overflow ramp is the identical twin-helix running in reverse;
+   its rate is tunable. Balls never deplete: closed loop.
+   ══════════════════════════════════════════════════════════════════ */
+
+// ── canvas setup ─────────────────────────────────────────────────
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = 1440, H = 860;
+function fit() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const rect = cv.getBoundingClientRect();
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+fit(); window.addEventListener('resize', fit);
+
+// ── layout constants ─────────────────────────────────────────────
+const RAMP_W = 132, HEADER_H = 56, FOOTER_H = 96;
+const LANE_X = RAMP_W, LANE_Y = HEADER_H;
+const LANE_W_AREA = W - 2 * RAMP_W, LANE_H = H - HEADER_H - FOOTER_H;
+const NUM_LANES = 10;
+const LANE_W = LANE_W_AREA / NUM_LANES;
+const BALL_R = 13;
+const HAMMER_Y = LANE_Y + LANE_H - 16;
+const RAMP_TOP = LANE_Y + 8, RAMP_BOT = HAMMER_Y;
+const RAMP_HEIGHT = RAMP_BOT - RAMP_TOP;
+const HELIX_AMP = 46, HELIX_TURNS = 7, HELIX_SEGS = 120;
+const LIFT_CX = RAMP_W / 2 + 2;
+const OVFL_CX = W - RAMP_W / 2 - 2;
+const BALL_START_Y = LANE_Y + BALL_R + 4;
+const BALL_HIT_Y = HAMMER_Y - BALL_R - 2;
+const FALL_TIME = 0.65;                       // seconds, 5 ft drop
+const G_PX = 2 * (BALL_HIT_Y - BALL_START_Y) / (FALL_TIME * FALL_TIME);
+const LIFT_SPEED = 45 / 60 / HELIX_TURNS;     // progress/sec at 45 RPM
+
+// ── ALIENPAN D Minor Kurd — 10 notes, 440 Hz ────────────────────
+// Twilight Goat Pasture palette, extended to 10
+const NOTES = [
+  { name: 'D3',  freq: 146.83, col: [195, 45, 45]  },  // Deep Ember
+  { name: 'A3',  freq: 220.00, col: [210, 115, 20] },  // Burnt Honey
+  { name: 'Bb3', freq: 233.08, col: [130, 175, 60] },  // Sage
+  { name: 'C4',  freq: 261.63, col: [35, 165, 155] },  // Teal Spring
+  { name: 'D4',  freq: 293.66, col: [40, 105, 210] },  // Twilight Blue
+  { name: 'E4',  freq: 329.63, col: [130, 55, 195] },  // Violet Dusk
+  { name: 'F4',  freq: 349.23, col: [190, 165, 60] },  // Evening Gold
+  { name: 'G4',  freq: 392.00, col: [215, 90, 130] },  // Rose Dawn
+  { name: 'A4',  freq: 440.00, col: [160, 170, 185] }, // Gunmetal Silver
+  { name: 'C5',  freq: 523.25, col: [235, 225, 200] }, // Moonlit Cream
+];
+const laneCx = l => LANE_X + l * LANE_W + LANE_W / 2;
+
+// ── song: Ode to Joy, arranged for D Kurd ────────────────────────
+const QN = 460; // ms per beat
+const D3=0, A3=1, Bb3=2, C4=3, D4=4, E4=5, F4=6, G4=7, A4=8, C5=9;
+function buildSong() {
+  const ev = [];
+  const mel = [E4,E4,F4,G4, G4,F4,E4,D4, C4,C4,D4,E4, E4,D4,D4];
+  const dur = [1,1,1,1, 1,1,1,1, 1,1,1,1, 1.5,0.5,2];
+  let t = 0;
+  for (let i = 0; i < mel.length; i++) { ev.push([mel[i], t]); t += dur[i] * QN; }
+  const bass = [[D3,0],[A3,2],[Bb3,4],[A3,6],[D3,8],[C4,10],[Bb3,12],[D3,14],[A3,14]];
+  for (const [n, q] of bass) ev.push([n, q * QN]);
+  ev.sort((a, b) => a[1] - b[1]);
+  return { events: ev, totalMs: t + 1500 };
+}
+const SONG = buildSong();
+const FALL_MS = FALL_TIME * 1000;
+const MIN_GAP = 320; // ms between drops in same lane
+
+// ── state ────────────────────────────────────────────────────────
+let gate = 'play';            // 'play' | 'bypass'
+let ovfRate = 1.0;            // overflow multiplier 0.1–8.0
+let paused = false;
+let songMs = -FALL_MS;
+let songIdx = 0;
+let phase = 0;                // helix rotation phase (rad)
+let lastDrop = new Array(NUM_LANES).fill(-1e9);
+let fieldBalls = [];          // {lane, x, y, vy}
+let liftBalls = [];           // {p, helix, lane}
+let ovflBalls = [];           // {p, helix, lane}
+let laneGlow = new Array(NUM_LANES).fill(0);
+let hammerGlow = new Array(NUM_LANES).fill(0);
+let hammerPlunge = new Array(NUM_LANES).fill(0);
+let noteCount = 0;
+
+// seed the closed loop with balls already in transit
+for (let i = 0; i < 5; i++) liftBalls.push({ p: (i + 0.5) / 5, helix: i % 2, lane: i * 2 });
+for (let i = 0; i < 3; i++) ovflBalls.push({ p: 1 - (i + 0.5) / 3, helix: i % 2, lane: i * 3 + 1 });
+
+function resetSong() {
+  songMs = -FALL_MS; songIdx = 0; noteCount = 0;
+  fieldBalls = [];
+  lastDrop.fill(-1e9);
+}
+
+// ── audio: handpan synthesis (Web Audio) ─────────────────────────
+let AC = null, master = null;
+function initAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain(); master.gain.value = 0.5;
+  const comp = AC.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.ratio.value = 6;
+  master.connect(comp); comp.connect(AC.destination);
+  document.getElementById('audioHint').textContent = '🔊 sound on';
+}
+document.addEventListener('pointerdown', initAudio, { once: false });
+document.addEventListener('keydown', initAudio, { once: false });
+
+function playHandpan(freq) {
+  if (!AC) return;
+  const t0 = AC.currentTime;
+  // handpan partials: fundamental, octave, octave+fifth
+  const partials = [[1.0, 1.0, 2.6], [2.0, 0.4, 2.1], [2.98, 0.18, 1.5]];
+  for (const [ratio, amp, dec] of partials) {
+    const o = AC.createOscillator();
+    const g = AC.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq * ratio * (1 + (Math.random() - 0.5) * 0.0015);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(amp * 0.32, t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dec);
+    o.connect(g); g.connect(master);
+    o.start(t0); o.stop(t0 + dec + 0.1);
+  }
+  // soft mallet transient
+  const nb = AC.createBuffer(1, AC.sampleRate * 0.03, AC.sampleRate);
+  const d = nb.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+  const ns = AC.createBufferSource(); ns.buffer = nb;
+  const nf = AC.createBiquadFilter(); nf.type = 'bandpass';
+  nf.frequency.value = freq * 2.5; nf.Q.value = 1.2;
+  const ng = AC.createGain(); ng.gain.value = 0.12;
+  ns.connect(nf); nf.connect(ng); ng.connect(master);
+  ns.start(t0);
+}
+
+// ── drop logic ───────────────────────────────────────────────────
+function dropBall(lane) {
+  fieldBalls.push({ lane, x: laneCx(lane), y: BALL_START_Y, vy: 0 });
+  lastDrop[lane] = songMs;
+}
+
+function step(dt) {
+  songMs += dt * 1000;
+  phase += 45 * 2 * Math.PI / 60 * dt;   // 45 RPM base
+
+  // schedule song drops
+  while (songIdx < SONG.events.length) {
+    const [lane, st] = SONG.events[songIdx];
+    if (songMs >= st - FALL_MS && songMs - lastDrop[lane] >= MIN_GAP) {
+      dropBall(lane); songIdx++;
+    } else break;
+  }
+
+  // falling balls
+  const survivors = [];
+  for (const b of fieldBalls) {
+    b.vy += G_PX * dt; b.y += b.vy * dt;
+    if (b.y >= BALL_HIT_Y) {
+      if (gate === 'play') {
+        laneGlow[b.lane] = 1; hammerGlow[b.lane] = 1; hammerPlunge[b.lane] = 1;
+        playHandpan(NOTES[b.lane].freq);
+        noteCount++;
+        liftBalls.push({ p: 0, helix: noteCount % 2, lane: b.lane });
+      } else {
+        laneGlow[b.lane] = Math.max(laneGlow[b.lane], 0.25); // dim pass-through
+        ovflBalls.push({ p: 1, helix: noteCount % 2, lane: b.lane });
+        noteCount++;
+      }
+    } else survivors.push(b);
+  }
+  fieldBalls = survivors;
+
+  // decay glows
+  for (let i = 0; i < NUM_LANES; i++) {
+    laneGlow[i] = Math.max(0, laneGlow[i] - dt * 1.8);
+    hammerGlow[i] = Math.max(0, hammerGlow[i] - dt * 2.2);
+    hammerPlunge[i] = Math.max(0, hammerPlunge[i] - dt * 9);
+  }
+
+  // helix ball transport
+  const up = LIFT_SPEED * dt;
+  liftBalls = liftBalls.filter(b => { b.p += up; return b.p < 1.0; });
+  // lift arrivals respawn at their lane top (closed loop)
+  for (const b of liftBalls) if (b.p >= 1.0) {}
+  liftBalls = liftBalls.filter(b => {
+    if (b.p >= 1.0) {
+      // deliver to lane top with slight stagger
+      if (songMs - lastDrop[b.lane] > 200) {
+        fieldBalls.push({ lane: b.lane, x: laneCx(b.lane), y: BALL_START_Y, vy: 0 });
+        lastDrop[b.lane] = songMs;
+      }
+      return false;
+    }
+    return true;
+  });
+
+  const down = LIFT_SPEED * ovfRate * dt;
+  ovflBalls = ovflBalls.filter(b => {
+    b.p -= down;
+    if (b.p <= 0) {
+      // overflow exit feeds back into lift ramp (closed loop)
+      liftBalls.push({ p: 0, helix: (noteCount + b.lane) % 2, lane: b.lane });
+      return false;
+    }
+    return true;
+  });
+
+  // keep a gentle ambient trickle on the overflow so the ramp is alive
+  if (Math.random() < dt * 0.35 && ovflBalls.length < 6) {
+    ovflBalls.push({ p: 1, helix: Math.floor(Math.random() * 2), lane: Math.floor(Math.random() * NUM_LANES) });
+  }
+}
+
+// ── drawing helpers ──────────────────────────────────────────────
+function rgb(c, a) { return a === undefined ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+
+function drawHelix(cx, goingUp, balls, label) {
+  const cols = [[70, 150, 255], [255, 165, 50]];
+  const dims = [[18, 38, 65], [65, 42, 13]];
+  for (let hx = 0; hx < 2; hx++) {
+    const pts = [];
+    for (let si = 0; si <= HELIX_SEGS; si++) {
+      const p = si / HELIX_SEGS;
+      let ang = p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase);
+      if (hx === 1) ang = -(p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase)) + Math.PI;
+      pts.push([cx + HELIX_AMP * Math.sin(ang), RAMP_BOT - p * RAMP_HEIGHT, Math.cos(ang)]);
+    }
+    for (const front of [false, true]) {
+      ctx.lineWidth = front ? 3 : 1.2;
+      ctx.strokeStyle = rgb(front ? cols[hx] : dims[hx]);
+      ctx.beginPath();
+      let started = false;
+      for (let si = 0; si < pts.length; si++) {
+        const onFront = pts[si][2] > 0;
+        if (onFront === front) {
+          if (!started) { ctx.moveTo(pts[si][0], pts[si][1]); started = true; }
+          else ctx.lineTo(pts[si][0], pts[si][1]);
+        } else started = false;
+      }
+      ctx.stroke();
+    }
+  }
+  // balls riding the helix
+  for (const b of balls) {
+    let ang = b.p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase);
+    if (b.helix === 1) ang = -(b.p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase)) + Math.PI;
+    const bx = cx + HELIX_AMP * Math.sin(ang);
+    const by = RAMP_BOT - b.p * RAMP_HEIGHT;
+    const z = Math.cos(ang);
+    if (z < -0.4) continue;
+    const r = Math.max(5, BALL_R * 0.62 + z * 3.5);
+    const c = NOTES[b.lane].col;
+    ctx.beginPath(); ctx.arc(bx + 1, by + 1, r, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.fillStyle = rgb(c); ctx.fill();
+    ctx.beginPath(); ctx.arc(bx - r / 3, by - r / 3, r / 3, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fill();
+  }
+  // motor
+  const my = RAMP_BOT + 30;
+  ctx.beginPath(); ctx.arc(cx, my, 18, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#34425a'; ctx.stroke();
+  const dir = goingUp ? 1 : -1;
+  ctx.beginPath(); ctx.moveTo(cx, my);
+  ctx.lineTo(cx + 14 * Math.cos(phase * dir), my + 14 * Math.sin(phase * dir));
+  ctx.strokeStyle = goingUp ? '#5aaaff' : '#ffa050'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, my, 4, 0, 7); ctx.fillStyle = goingUp ? '#468cdc' : '#dc8c46'; ctx.fill();
+  ctx.font = '10px monospace'; ctx.fillStyle = '#5f7396'; ctx.textAlign = 'center';
+  ctx.fillText(label, cx, my + 32);
+}
+
+function draw() {
+  ctx.fillStyle = '#05070b'; ctx.fillRect(0, 0, W, H);
+
+  // header
+  ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#8c9ebe'; ctx.textAlign = 'left';
+  ctx.fillText('HONEYLIGHT MARBLE QUIPU  ·  Rubin Lifting Ramp  ·  10 lanes  ·  0.25 HP  ·  ALIENPAN D Kurd', 12, 22);
+  ctx.font = '11px monospace'; ctx.fillStyle = '#5c6c88';
+  ctx.fillText('golf balls · twin counter-rotating helix · gate control · tunable overflow', 12, 38);
+  // song progress
+  const pct = Math.min(1, Math.max(0, songMs / SONG.totalMs));
+  ctx.fillStyle = '#101620'; ctx.fillRect(LANE_X, 46, LANE_W_AREA, 3);
+  ctx.fillStyle = '#327dc3'; ctx.fillRect(LANE_X, 46, LANE_W_AREA * pct, 3);
+
+  // LED quipu bar
+  for (let i = 0; i < NUM_LANES; i++) {
+    const cx = laneCx(i), cy = LANE_Y - 14;
+    const c = NOTES[i].col;
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 7);
+    ctx.fillStyle = rgb(c.map(v => Math.max(10, v * 0.12))); ctx.fill();
+    if (laneGlow[i] > 0.02) {
+      ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 7);
+      ctx.fillStyle = rgb(c, Math.min(1, laneGlow[i])); ctx.fill();
+      if (laneGlow[i] > 0.35) {
+        ctx.beginPath(); ctx.arc(cx, cy, 13, 0, 7);
+        ctx.strokeStyle = rgb(c, laneGlow[i] * 0.4); ctx.lineWidth = 2; ctx.stroke();
+      }
+    }
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 7); ctx.strokeStyle = '#10141c'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.font = '9px monospace'; ctx.fillStyle = '#32405a'; ctx.textAlign = 'center';
+    ctx.fillText(NOTES[i].name, cx, cy + 3);
+  }
+
+  // lane frame
+  ctx.strokeStyle = '#1c2430'; ctx.lineWidth = 2;
+  ctx.strokeRect(LANE_X, LANE_Y, LANE_W_AREA, LANE_H);
+
+  // lane dividers + glow wash
+  for (let i = 0; i < NUM_LANES; i++) {
+    const lx = LANE_X + i * LANE_W;
+    if (i > 0) { ctx.strokeStyle = '#10151e'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(lx, LANE_Y); ctx.lineTo(lx, HAMMER_Y - 16); ctx.stroke(); }
+    if (laneGlow[i] > 0.04) {
+      ctx.fillStyle = rgb(NOTES[i].col, laneGlow[i] * 0.06);
+      ctx.fillRect(lx + 1, LANE_Y, LANE_W - 2, LANE_H - 22);
+    }
+  }
+
+  // ramps
+  drawHelix(LIFT_CX, true, liftBalls, 'LIFT ↑ 132 RPM');
+  drawHelix(OVFL_CX, false, ovflBalls, `OVERFLOW ↓ ${(ovfRate * 45).toFixed(0)} RPM`);
+
+  // return tray with routing
+  const ty = HAMMER_Y + 24;
+  ctx.fillStyle = '#141c28';
+  ctx.beginPath(); ctx.roundRect(LANE_X - 6, ty, LANE_W_AREA + 12, 8, 3); ctx.fill();
+  ctx.strokeStyle = gate === 'play' ? '#1e4030' : '#402020'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(LANE_X, ty + 4); ctx.lineTo(LIFT_CX + HELIX_AMP, ty + 4); ctx.stroke();
+  ctx.strokeStyle = gate === 'bypass' ? '#7d3535' : '#19222e';
+  ctx.beginPath(); ctx.moveTo(LANE_X + LANE_W_AREA, ty + 4); ctx.lineTo(OVFL_CX - HELIX_AMP, ty + 4); ctx.stroke();
+  ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillStyle = gate === 'play' ? '#4caf7d' : '#5c6c88';
+  ctx.fillText(gate === 'play' ? '◀ PLAY: balls → lift ramp (closed loop)' : '·', LANE_X + LANE_W_AREA * 0.28, ty + 20);
+  ctx.fillStyle = gate === 'bypass' ? '#e07070' : '#5c6c88';
+  ctx.fillText(gate === 'bypass' ? 'BYPASS: balls → overflow ramp ▶' : '·', LANE_X + LANE_W_AREA * 0.74, ty + 20);
+
+  // field balls
+  for (const b of fieldBalls) {
+    const c = NOTES[b.lane].col;
+    ctx.beginPath(); ctx.arc(b.x + 2, b.y + 2, BALL_R, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 7); ctx.fillStyle = rgb(c); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x - BALL_R / 3, b.y - BALL_R / 3, BALL_R / 3, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 7); ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  // hammers (solenoid blocks)
+  for (let i = 0; i < NUM_LANES; i++) {
+    const cx = laneCx(i), c = NOTES[i].col;
+    const bw = LANE_W - 8, bh = 14;
+    if (hammerGlow[i] > 0.02) {
+      const pad = Math.round(8 * hammerGlow[i]);
+      ctx.fillStyle = rgb(c.map(v => Math.min(255, v * hammerGlow[i] + 15)), 0.9);
+      ctx.beginPath(); ctx.roundRect(cx - bw / 2 - pad, HAMMER_Y - bh / 2 - pad, bw + 2 * pad, bh + 2 * pad, 5); ctx.fill();
+    }
+    ctx.fillStyle = '#2a303a';
+    ctx.beginPath(); ctx.roundRect(cx - bw / 2, HAMMER_Y - bh / 2, bw, bh, 3); ctx.fill();
+    const pe = Math.round(hammerPlunge[i] * 10);
+    ctx.fillStyle = hammerGlow[i] > 0.08 ? rgb(c) : '#586270';
+    ctx.beginPath(); ctx.roundRect(cx - 3, HAMMER_Y - bh / 2 - 7 + pe, 5, 9, 2); ctx.fill();
+  }
+
+  // footer readouts
+  const stats = [
+    ['GATE', gate === 'play' ? '▶ PLAY' : '⏭ BYPASS'],
+    ['MODE', gate === 'play' ? 'instrument live' : 'direct to overflow'],
+    ['NOTES', String(noteCount)],
+    ['BALLS IN FLIGHT', String(fieldBalls.length)],
+    ['LIFT QUEUE', String(liftBalls.length)],
+    ['OVERFLOW', `${ovfRate.toFixed(1)}× · ${ovflBalls.length} balls`],
+  ];
+  let sx = LANE_X, sy = H - FOOTER_H + 62;
+  ctx.textAlign = 'left';
+  for (const [k, v] of stats) {
+    ctx.font = '9px monospace'; ctx.fillStyle = '#3a4a64'; ctx.fillText(k, sx, sy - 14);
+    ctx.font = '12px monospace';
+    ctx.fillStyle = (k === 'GATE') ? (gate === 'play' ? '#4caf7d' : '#e07070') : '#9fb2d0';
+    ctx.fillText(v, sx, sy);
+    sx += Math.max(ctx.measureText(k).width, ctx.measureText(v).width) + 34;
+  }
+}
+
+// ── main loop ────────────────────────────────────────────────────
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!paused) step(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ── controls ─────────────────────────────────────────────────────
+const gateBtn = document.getElementById('gateBtn');
+function setGate(g) {
+  gate = g;
+  gateBtn.textContent = g === 'play' ? '▶ GATE: PLAY' : '⏭ GATE: BYPASS';
+  gateBtn.className = 'btn ' + (g === 'play' ? 'play active' : 'bypass active');
+}
+gateBtn.onclick = () => setGate(gate === 'play' ? 'bypass' : 'play');
+
+document.getElementById('ovfMinus').onclick = () => { ovfRate = Math.max(0.1, Math.round((ovfRate - 0.1) * 10) / 10); upd(); };
+document.getElementById('ovfPlus').onclick = () => { ovfRate = Math.min(8.0, Math.round((ovfRate + 0.1) * 10) / 10); upd(); };
+function upd() { document.getElementById('ovfReadout').textContent = ovfRate.toFixed(1) + '×'; }
+
+const pauseBtn = document.getElementById('pauseBtn');
+pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE'; };
+document.getElementById('restartBtn').onclick = resetSong;
+
+cv.addEventListener('pointerdown', e => {
+  const rect = cv.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (W / rect.width);
+  const y = (e.clientY - rect.top) * (H / rect.height);
+  if (x > LANE_X && x < LANE_X + LANE_W_AREA && y > LANE_Y && y < HAMMER_Y) {
+    dropBall(Math.floor((x - LANE_X) / LANE_W));
+  }
+});
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'g' || e.key === 'G') setGate(gate === 'play' ? 'bypass' : 'play');
+  else if (e.key === '-' || e.key === '_') { ovfRate = Math.max(0.1, ovfRate - 0.1); upd(); }
+  else if (e.key === '+' || e.key === '=') { ovfRate = Math.min(8.0, ovfRate + 0.1); upd(); }
+  else if (e.key === ' ') { e.preventDefault(); pauseBtn.click(); }
+  else if (e.key === 'r' || e.key === 'R') resetSong();
+  else if (/^[0-9]$/.test(e.key)) {
+    const lane = e.key === '0' ? 9 : parseInt(e.key) - 1;
+    if (lane < NUM_LANES) dropBall(lane);
+  }
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,17 @@
 # HONEYLIGHT MARBLE QUIPU — Complete Prototype Parts List
 ## 4 ft tall × 8 ft wide · 16 lanes · 16 hammers · Golf balls · Solar powered
 
+> **⚠️ INSTRUMENT CONFIRMED 2026-08-04:** Mark's chosen instrument is the
+> **ALIENPAN handpan — D Minor Kurd, 440 Hz, 10 notes, AISI 430 stainless
+> steel, 22×22×10", bronze finish, with bag + wooden stand** (photo verified).
+> This is a handpan (10 tone fields on a convex shell), NOT a steel tongue
+> drum. Adjustments vs. the BOM below:
+> - Solenoid arch carries **10 hammers**, not 16 (one per tone field)
+> - Arch diameter ~26" to clear the 22" shell + stand
+> - Contact pickup mounts under the shell base, not on tongues
+> - Sim (honeylight_full.py → marble-quipu-sim.html) already retuned to 10 lanes D Kurd
+> - The 16-lane lane/ramp hardware below remains valid for the V2 canon build
+
 > **Vision:** 16 parallel golf ball lanes (quipu runners) drop balls onto a handpan tongue drum actuated by solenoid hammers, triggered by IR sensors, driven by a Raspberry Pi, displayed on an RGB LED quipu bar, amplified through barn speakers, powered by solar.
 
 ---
