@@ -1,27 +1,15 @@
 
-const steps = [];
-let rafCb = null;
-function stubCtx() {
-  return new Proxy({}, {
-    get(t, p) {
-      if (p === 'measureText') return () => ({ width: 10 });
-      if (p === 'createLinearGradient') return () => ({ addColorStop() {} });
-      return typeof t[p] !== 'undefined' ? t[p] : () => {};
-    },
-    set(t, p, v) { t[p] = v; return true; }
-  });
-}
-function stubEl() {
-  return { style: {}, textContent: '', className: '',
-    addEventListener() {}, onclick: null,
-    getContext: () => stubCtx(),
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 940 }) };
-}
-global.document = { getElementById: () => stubEl(), addEventListener() {}, createElement: () => stubEl() };
-global.window = { devicePixelRatio: 1, addEventListener() {}, AudioContext: undefined, webkitAudioContext: undefined };
-global.performance = { now: () => nowMs };
-global.requestAnimationFrame = cb => { rafCb = cb; };
-let nowMs = 0;
+const stubEl = () => ({
+  style: {}, classList: { add(){}, remove(){}, toggle(){}, contains(){return false} },
+  addEventListener(){}, setPointerCapture(){}, appendChild(){}, children: [],
+  getContext(){ return new Proxy({}, { get: (t,p) => (typeof p === 'string' ? (...a)=>0 : undefined) }); },
+});
+global.document = { getElementById: () => stubEl(), createElement: () => stubEl(), addEventListener(){} };
+global.window = { addEventListener(){}, devicePixelRatio: 1 };
+global.requestAnimationFrame = () => {};
+global.performance = { now: () => 0 };
+global.setInterval = () => 0;
+global.clearInterval = () => {};
 
 'use strict';
 /* ══════════════════════════════════════════════════════════════════
@@ -43,7 +31,12 @@ let nowMs = 0;
      Balanced at every snapshot.
    Lift (v3) unchanged: 6 da Vinci wheels in series, each lifts 90%
    of ½D (Ø18" → 8.1"; 6 × 8.1" = 4.05 ft), RPM ∝ note frequency,
-   LED color-coded. Overflow (v2) unchanged: RUBIN 1982 machine.
+   LED color-coded. Return path: gravity only — balls bounce toward
+   the back, drop onto the rail on the right side, and roll to the
+   bottom-left corner for da Vinci lift pickup. The 1982 overflow
+   wheel is gone; geometry does the work.
+   · COGNITION: the six perspectives of cognition as a rotatable
+   cube — Who & What loads first: every golf ball, grouped by color.
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -125,45 +118,52 @@ const FLOWER_COST = 0.25;                             // $ per flower planted
 const PE_PER_DROP = peOfY(BALL_START_Y);              // PE released per ball drop (J)
 const HARVEST_J = PE_PER_DROP - SOUND_J;              // surplus harvested as money per note
 
-// ── the 1982 overflow machine (right column) ────────────────────
-const WHEEL_CX = W - RIGHT_W / 2 - 4;
-const WHEEL_CY = LANE_Y + (INSTR_Y - LANE_Y) * 0.40;
-const WHEEL_R = 62;
-const WHEEL_POCKETS = 6;
-const ENTRY_ANG = -0.72;
-const EXIT_ANG  = 2.35;
-const MAG_A = 2.6, MAG_B = -0.15;
+// ── gravity return path (replaces the 1982 overflow wheel) ──────
+// strike → balls bounce toward the back → drop rail on the right
+// side catches them → they roll along the base rail to the bottom
+// left corner → da Vinci lift pickup. Pure gravity, no machine.
+const BOUNCE_MS = 190;                                 // bounce toward the back after the hammer
+const DROP_RAIL_X = W - RIGHT_W + 18;                  // drop rail x (right column)
+const RETURN_Y = INSTR_Y + INSTR_H - 16;               // base rail level (bottom of the tank)
+const RETURN_SPEED = 920;                              // px/s — roll speed along the base rail
 
 // ── ball supply: conserved, 110% of max demand ──────────────────
 const MAX_DEMAND = 25;
 const SUPPLY = Math.ceil(MAX_DEMAND * 1.10);          // = 28
 const slotX = k => LANE_X + 16 + k * (LANE_W_AREA - 32) / (SUPPLY - 1);
 
-// ── song: Ode to Joy, arranged for D Kurd ────────────────────────
+// ── song: Vivaldi — The Four Seasons · Spring (La Primavera) ────
+// Opening ritornello, arranged for ALIENPAN D Kurd: the fanfare of
+// repeated notes, the leading-tone rise, and the descending bird-
+// song run. C4 stands in for C#, Bb3 for B — modal color on steel.
 const QN = 460;
 const D3=0, A3=1, Bb3=2, C4=3, D4=4, E4=5, F4=6, G4=7, A4=8, C5=9;
 function buildSong() {
-  const ev = [];
-  const mel = [E4,E4,F4,G4, G4,F4,E4,D4, C4,C4,D4,E4, E4,D4,D4];
-  const dur = [1,1,1,1, 1,1,1,1, 1,1,1,1, 1.5,0.5,2];
-  let t = 0;
-  for (let i = 0; i < mel.length; i++) { ev.push([mel[i], t]); t += dur[i] * QN; }
-  const bass = [[D3,0],[A3,2],[Bb3,4],[A3,6],[D3,8],[C4,10],[Bb3,12],[D3,14],[A3,14]];
+  const mel = [
+    // statement 1 — "Spring has arrived"
+    [D4,0],[D4,1],[D4,2],[C4,3],[D4,3.5],[E4,4],[A4,5],[A4,6],[G4,7],[F4,7.5],[E4,8],
+    // statement 2 — echo
+    [D4,9],[D4,10],[D4,11],[C4,12],[D4,12.5],[E4,13],[A4,14],[A4,15],[G4,16],[A4,16.5],[Bb3,17],
+    // descending birdsong run
+    [A3,18],[C4,18.5],[D4,19],[E4,19.5],[F4,20],[E4,20.5],[D4,21],[C4,21.5],[Bb3,22],[A3,23],
+    // closing fanfare cadence
+    [D4,24],[D4,24.5],[D4,25],[A4,26],[G4,27],[F4,27.5],[E4,28],[D4,29],[D3,30.5],
+  ];
+  const ev = mel.map(([n, q]) => [n, q * QN]);
+  const bass = [[D3,0],[A3,4],[Bb3,8],[D3,12],[A3,16],[Bb3,20],[C4,24],[A3,28],[D3,30.5]];
   for (const [n, q] of bass) ev.push([n, q * QN]);
   ev.sort((a, b) => a[1] - b[1]);
-  return { events: ev, totalMs: t + 1500 };
+  return { events: ev, totalMs: 31.5 * QN + 1500 };
 }
 const SONG = buildSong();
 const FALL_MS = FALL_TIME * 1000;
 
 // ── state ────────────────────────────────────────────────────────
 let gate = 'play';
-let ovfRate = 1.0;
 let paused = false;
 let audioOn = false;
 let songMs = -FALL_MS - 800;
 let songIdx = 0;
-let wheelAng1982 = 0;
 let noteCount = 0;
 let money = 0, flowers = 0;
 let energyIn = 0, energyOut = 0;                      // J — the ledger
@@ -177,13 +177,12 @@ let bankBalls = [];     // holding bank: {slot, x, state:'settle'|'slide', tx}
 let gateState = { x: laneCx(4), pending: null };      // router carriage
 let dispatchQueue = []; // {lane, due, manual}
 let fieldBalls = [];    // falling: {lane, x, y, vy}
+let bounceBalls = [];   // strike → bounce toward the back: {lane, t, x0, id}
+let dropBalls = [];     // drop rail on the right side: {t, lane, id}
+let rollBalls = [];     // base rail → bottom left corner: {x, lane, id}
 let rideBalls = [];     // on a lift wheel: {wheel, ang, lane, py}
 let bridgeBalls = [];   // handoff bridge i (0..4) or top rail (5): {i, t, lane}
-let liftFeed = [];      // tray → wheel-0 entry ramp: {t, lane}
-let trayBalls = [];     // rolling on return tray: {x, tx, lane, t, dest}
-let ovfFeed = [];       // tray → 1982 feed ramp: {t, lane}
-let wheelBalls = [];    // in 1982 wheel pockets: {ang, lane}
-let retBalls = [];      // 1982 eject → lift base chute: {t, lane}
+let liftFeed = [];      // bottom-left corner → wheel-0 entry ramp: {t, lane}
 let hammerSwing = new Array(NUM_LANES).fill(0);
 let toneFlash = new Array(NUM_LANES).fill(0);
 let laneGlow = new Array(NUM_LANES).fill(0);
@@ -205,16 +204,16 @@ function seedBank() {
 seedBank();
 
 function totalBalls() {
-  return bankBalls.length + fieldBalls.length + rideBalls.length + bridgeBalls.length +
-         liftFeed.length + trayBalls.length + ovfFeed.length + wheelBalls.length + retBalls.length;
+  return bankBalls.length + fieldBalls.length + bounceBalls.length + dropBalls.length +
+         rollBalls.length + rideBalls.length + bridgeBalls.length + liftFeed.length;
 }
 
 function resetSong() {
   songMs = -FALL_MS - 800; songIdx = 0; noteCount = 0;
   money = 0; flowers = 0; energyIn = 0; energyOut = 0;
   accDispatch = 0; accStrike = 0;
-  fieldBalls = []; rideBalls = []; bridgeBalls = []; liftFeed = [];
-  trayBalls = []; ovfFeed = []; wheelBalls = []; retBalls = [];
+  fieldBalls = []; bounceBalls = []; dropBalls = []; rollBalls = [];
+  rideBalls = []; bridgeBalls = []; liftFeed = [];
   dispatchQueue = []; gateState.pending = null;
   ripples = []; snapHistory = [];
   for (let i = 0; i < NUM_LANES; i++) { hammerSwing[i] = 0; toneFlash[i] = 0; laneGlow[i] = 0; }
@@ -355,7 +354,6 @@ function snapshotTargets() {
 
 function step(dt) {
   songMs += dt * 1000;
-  wheelAng1982 += ovfRate * 45 * 2 * Math.PI / 60 * dt;
   for (let i = 0; i < N_WHEELS; i++) {
     liftAng[i] -= wheelOmega(i) * dt;
     liftGlow[i] = Math.max(0, liftGlow[i] - dt * 2.4);
@@ -399,29 +397,45 @@ function step(dt) {
         money += NOTE_VALUE;
         const nf = Math.floor(money / FLOWER_COST);
         if (nf > flowers) { flowers = nf; accStrike += 0.6; }
-        trayBalls.push({ x: b.x, tx: LANE_X + 30, lane: b.lane, t: 0, dest: 'lift' });
       } else {
         laneGlow[b.lane] = Math.max(laneGlow[b.lane], 0.25);
-        trayBalls.push({ x: b.x, tx: FEED1982_P0[0], lane: b.lane, t: 0, dest: 'wheel' });
       }
+      // gravity return: the ball bounces toward the back of the machine
+      bounceBalls.push({ lane: b.lane, x0: b.x, t: 0 });
       accStrike += 0.3;
     } else survivors.push(b);
   }
   fieldBalls = survivors;
 
-  // tray: roll to destination, then hand off
-  const trayLeft = [];
-  for (const b of trayBalls) {
-    b.t += dt / 0.55;
-    b.x += (b.tx - b.x) * Math.min(1, dt * 6);
-    if (b.t >= 1) {
-      if (b.dest === 'lift') liftFeed.push({ t: 0, lane: b.lane });
-      else ovfFeed.push({ t: 0, lane: b.lane });
-    } else trayLeft.push(b);
+  // ── gravity return path (no machine — pure geometry) ──────────
+  // 1) bounce toward the back → land on the drop rail (right side)
+  const boLeft = [];
+  for (const b of bounceBalls) {
+    b.t += dt * 1000 / BOUNCE_MS;
+    if (b.t >= 1) dropBalls.push({ t: 0, lane: b.lane });
+    else boLeft.push(b);
   }
-  trayBalls = trayLeft;
+  bounceBalls = boLeft;
 
-  // tray → wheel-0 entry ramp
+  // 2) drop rail: slide down the right side to the base rail
+  const drLeft = [];
+  for (const b of dropBalls) {
+    b.t += dt / 0.30;
+    if (b.t >= 1) rollBalls.push({ x: DROP_RAIL_X, lane: b.lane });
+    else drLeft.push(b);
+  }
+  dropBalls = drLeft;
+
+  // 3) base rail: roll to the bottom-left corner → da Vinci lift pickup
+  const roLeft = [];
+  for (const b of rollBalls) {
+    b.x -= RETURN_SPEED * dt;
+    if (b.x <= LANE_X + 14) liftFeed.push({ t: 0, lane: b.lane });
+    else roLeft.push(b);
+  }
+  rollBalls = roLeft;
+
+  // 4) bottom-left corner → wheel-0 entry ramp
   const lfLeft = [];
   for (const b of liftFeed) {
     b.t += dt / 0.5;
@@ -463,39 +477,11 @@ function step(dt) {
         liftGlow[b.i + 1] = Math.max(liftGlow[b.i + 1], 0.7);
       } else {
         const x0 = LIFT_CX + LWR + 8;
-        if (!enterBank(b.lane, x0 + 60)) ovfFeed.push({ t: 0, lane: b.lane });
+        if (!enterBank(b.lane, x0 + 60)) rollBalls.push({ x: DROP_RAIL_X, lane: b.lane });
       }
     } else brLeft.push(b);
   }
   bridgeBalls = brLeft;
-
-  // tray → 1982 feed ramp
-  const ofLeft = [];
-  for (const b of ovfFeed) {
-    b.t += dt / 0.5;
-    if (b.t >= 1) wheelBalls.push({ ang: ENTRY_ANG, lane: b.lane });
-    else ofLeft.push(b);
-  }
-  ovfFeed = ofLeft;
-
-  // 1982 wheel: carry from entry to eject
-  const wSpeed = ovfRate * 45 * 2 * Math.PI / 60;
-  const wheelLeft = [];
-  for (const b of wheelBalls) {
-    b.ang += wSpeed * dt;
-    if (b.ang >= EXIT_ANG) retBalls.push({ t: 0, lane: b.lane });
-    else wheelLeft.push(b);
-  }
-  wheelBalls = wheelLeft;
-
-  // 1982 eject → lift base chute → wheel 0
-  const retLeft = [];
-  for (const b of retBalls) {
-    b.t += dt / 0.8;
-    if (b.t >= 1) { rideBalls.push({ wheel: 0, ang: LIFT_ENTRY, lane: b.lane, py: 0 }); liftGlow[0] = 1; }
-    else retLeft.push(b);
-  }
-  retBalls = retLeft;
 
   // gears: PE → MOTION → SOUND → MONEY
   // in-flight KE via conservation: PE released since the gate, minus none yet
@@ -516,13 +502,7 @@ function step(dt) {
 
 // ── path geometry ────────────────────────────────────────────────
 const TRAY_Y = INSTR_Y + INSTR_H - 20;
-const FEED1982_P0 = [LANE_X + LANE_W_AREA - 8, TRAY_Y];
-const FEED1982_P1 = [WHEEL_CX + WHEEL_R * Math.cos(ENTRY_ANG), WHEEL_CY + WHEEL_R * Math.sin(ENTRY_ANG)];
-const EJECT_PT = [WHEEL_CX + WHEEL_R * Math.cos(EXIT_ANG), WHEEL_CY + WHEEL_R * Math.sin(EXIT_ANG)];
-const RET_P0 = EJECT_PT;
-const RET_P1 = [WHEEL_CX - WHEEL_R - 30, WHEEL_CY + WHEEL_R + 40];
-const RET_P2 = [LIFT_CX + LWR + 26, wheelCY(0) + REL_OFF];
-const LFEED_P0 = [LANE_X + 10, TRAY_Y];
+const LFEED_P0 = [LANE_X + 10, RETURN_Y - 4];
 const LFEED_P1 = [LIFT_CX + LWR * 0.55, wheelCY(0) + LWR - 4];
 
 // ── drawing helpers ──────────────────────────────────────────────
@@ -635,85 +615,58 @@ function drawLiftColumn() {
   ctx.fillText(`each lifts 90% of ½D · ${LIFT_PER_WHEEL_IN}" × ${N_WHEELS} = ${TOTAL_LIFT_IN}" (4.05 ft)`, LIFT_CX, INSTR_Y + 26);
 }
 
-function drawWheel1982() {
-  const cx = WHEEL_CX, cy = WHEEL_CY, R = WHEEL_R;
-  ctx.strokeStyle = '#232c3d'; ctx.lineWidth = 5;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, INSTR_Y - 4); ctx.stroke();
-  ctx.fillStyle = '#1a2233'; ctx.fillRect(cx - 26, INSTR_Y - 8, 52, 8);
-  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7);
-  ctx.fillStyle = 'rgba(16,21,31,.85)'; ctx.fill();
-  ctx.lineWidth = 3; ctx.strokeStyle = '#3a4a64'; ctx.stroke();
-  for (let k = 0; k < WHEEL_POCKETS; k++) {
-    const a0 = wheelAng1982 + k * Math.PI * 2 / WHEEL_POCKETS;
-    ctx.beginPath();
-    for (let s = 0; s <= 20; s++) {
-      const t = s / 20;
-      const a = a0 + t * 0.85;
-      const r = R * 0.28 + t * R * 0.66;
-      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
-      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
-  }
-  for (let k = 0; k < WHEEL_POCKETS; k++) {
-    const a = wheelAng1982 + k * Math.PI * 2 / WHEEL_POCKETS;
-    ctx.beginPath(); ctx.moveTo(cx + R * 0.2 * Math.cos(a), cy + R * 0.2 * Math.sin(a));
-    ctx.lineTo(cx + R * 0.97 * Math.cos(a), cy + R * 0.97 * Math.sin(a));
-    ctx.strokeStyle = '#2c3a52'; ctx.lineWidth = 1.5; ctx.stroke();
-  }
-  ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
-  ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + 9 * Math.cos(wheelAng1982), cy + 9 * Math.sin(wheelAng1982));
-  ctx.strokeStyle = '#ffa050'; ctx.lineWidth = 2.5; ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx, cy, R + 14, -0.4, -1.6, true);
-  ctx.strokeStyle = 'rgba(232,197,106,.5)'; ctx.lineWidth = 2; ctx.stroke();
-  const ah = -1.6;
-  ctx.beginPath();
-  ctx.moveTo(cx + (R + 14) * Math.cos(ah), cy + (R + 14) * Math.sin(ah));
-  ctx.lineTo(cx + (R + 20) * Math.cos(ah - 0.18), cy + (R + 20) * Math.sin(ah - 0.18));
-  ctx.lineTo(cx + (R + 8) * Math.cos(ah - 0.22), cy + (R + 8) * Math.sin(ah - 0.22));
-  ctx.closePath(); ctx.fillStyle = 'rgba(232,197,106,.6)'; ctx.fill();
-  for (const ma of [MAG_A, MAG_B]) {
-    const mx = cx + (R + 26) * Math.cos(ma), myy = cy + (R + 26) * Math.sin(ma);
-    ctx.save(); ctx.translate(mx, myy); ctx.rotate(ma + Math.PI / 2);
-    ctx.fillStyle = '#5a3030'; ctx.fillRect(-12, -7, 24, 14);
-    ctx.fillStyle = '#c05050'; ctx.fillRect(-12, -7, 12, 14);
-    ctx.strokeStyle = '#7d4040'; ctx.lineWidth = 1; ctx.strokeRect(-12, -7, 24, 14);
-    ctx.restore();
-    ctx.strokeStyle = '#e05050'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(mx, myy);
-    ctx.lineTo(cx + (R + 6) * Math.cos(ma), cy + (R + 6) * Math.sin(ma)); ctx.stroke();
-  }
-  for (const b of wheelBalls) {
-    const r = R * 0.28 + ((b.ang - ENTRY_ANG) / (EXIT_ANG - ENTRY_ANG)) * R * 0.6;
-    drawBall(cx + r * Math.cos(b.ang), cy + r * Math.sin(b.ang), NOTES[b.lane].col, 9);
-  }
-  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(FEED1982_P0[0], FEED1982_P0[1]); ctx.lineTo(FEED1982_P1[0], FEED1982_P1[1]); ctx.stroke();
-  ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(FEED1982_P0[0], FEED1982_P0[1] - 4); ctx.lineTo(FEED1982_P1[0], FEED1982_P1[1] - 4); ctx.stroke();
-  for (const b of ovfFeed) {
-    const x = FEED1982_P0[0] + (FEED1982_P1[0] - FEED1982_P0[0]) * b.t;
-    const y = FEED1982_P0[1] + (FEED1982_P1[1] - FEED1982_P0[1]) * b.t - 7;
-    drawBall(x, y, NOTES[b.lane].col, 9);
-  }
+// ── gravity return path: bounce → drop rail → base rail → corner ─
+const BOUNCE_P0 = x0 => [x0, BALL_HIT_Y + 4];
+const BOUNCE_P1 = x0 => [x0 + (DROP_RAIL_X - x0) * 0.55, BALL_HIT_Y - 34];
+const BOUNCE_P2 = [DROP_RAIL_X, RETURN_Y - 22];
+function drawReturnPath() {
+  // the drop rail — right side of the machine, feeds down to the base
+  const rx = DROP_RAIL_X;
   ctx.strokeStyle = '#54432a'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(rx, RETURN_Y - 22); ctx.lineTo(rx, RETURN_Y); ctx.stroke();
+  ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(rx + 4, RETURN_Y - 22); ctx.lineTo(rx + 4, RETURN_Y); ctx.stroke();
+
+  // the base rail — right side → bottom-left corner (where the lift picks up)
+  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(rx, RETURN_Y); ctx.lineTo(LANE_X + 6, RETURN_Y); ctx.stroke();
+  ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(rx, RETURN_Y - 4); ctx.lineTo(LANE_X + 6, RETURN_Y - 4); ctx.stroke();
+
+  // pickup corner marker
+  ctx.beginPath(); ctx.arc(LANE_X + 14, RETURN_Y - 6, 10, 0, 7);
+  ctx.strokeStyle = '#3a5a44'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.font = '8px monospace'; ctx.fillStyle = '#4caf7d'; ctx.textAlign = 'center';
+  ctx.fillText('LIFT PICKUP', LANE_X + 14, RETURN_Y + 14);
+
+  // bounce arcs (shown while balls are bouncing toward the back)
+  ctx.strokeStyle = 'rgba(140,158,190,.14)'; ctx.lineWidth = 1;
+  ctx.setLineDash([3, 5]);
   ctx.beginPath();
-  for (let s = 0; s <= 24; s++) {
-    const p = bez3(RET_P0, RET_P1, RET_P2, s / 24);
+  const px0 = laneCx(4);
+  for (let s = 0; s <= 20; s++) {
+    const p = bez3(BOUNCE_P0(px0), BOUNCE_P1(px0), BOUNCE_P2, s / 20);
     if (s === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
   }
   ctx.stroke();
-  for (const b of retBalls) {
-    const p = bez3(RET_P0, RET_P1, RET_P2, b.t);
-    drawBall(p[0], p[1] - 6, NOTES[b.lane].col, 9);
+  ctx.setLineDash([]);
+
+  // balls bouncing toward the back
+  for (const b of bounceBalls) {
+    const p = bez3(BOUNCE_P0(b.x0), BOUNCE_P1(b.x0), BOUNCE_P2, b.t);
+    drawBall(p[0], p[1], NOTES[b.lane].col, 9);
   }
+  // balls sliding down the drop rail
+  for (const b of dropBalls) {
+    const y = (RETURN_Y - 22) + b.t * 22;
+    drawBall(rx, y - 6, NOTES[b.lane].col, 9);
+  }
+  // balls rolling along the base rail toward the corner
+  for (const b of rollBalls) drawBall(b.x, RETURN_Y - 8, NOTES[b.lane].col, 9);
+
   ctx.font = '9px monospace'; ctx.fillStyle = '#8a7340'; ctx.textAlign = 'center';
-  ctx.fillText('RUBIN 1982', cx, INSTR_Y + 14);
-  ctx.fillText('OVERFLOW MACHINE', cx, INSTR_Y + 26);
-  ctx.fillStyle = '#5c6c88';
-  ctx.fillText(`${(ovfRate * 45).toFixed(0)} RPM`, cx, cy + 4);
+  ctx.fillText('GRAVITY RETURN', rx, INSTR_Y + 14);
+  ctx.fillText('bounce → rail → corner', rx, INSTR_Y + 26);
 }
 
 function bez3(a, b, c, t) {
@@ -850,9 +803,9 @@ function currentTotals() {
     const y = b.i < N_WHEELS - 1 ? wheelCY(b.i) + REL_OFF : TOP_BRIDGE_Y;
     pe += peOfY(y);                                   // flat bridges — no height change
   }
-  // tray, lift-feed, and the whole 1982 bypass circuit are passive
+  // bounce, drop-rail, base-rail, and lift-feed states are passive
   // recirculators below the strike line: PE-neutral by construction
-  // (trayBalls, liftFeed, ovfFeed, wheelBalls, retBalls all count 0).
+  // (bounceBalls, dropBalls, rollBalls, liftFeed all count 0).
   return { pe, ke };
 }
 
@@ -950,7 +903,7 @@ function draw() {
   }
 
   drawLiftColumn();
-  drawWheel1982();
+  drawReturnPath();
 
   // ── instrument strip: the ALIENPAN ─────────────────────────────
   ctx.fillStyle = '#161210';
@@ -999,18 +952,13 @@ function draw() {
     }
   }
 
-  // return tray
-  ctx.fillStyle = '#141c28';
-  ctx.beginPath(); ctx.roundRect(LANE_X - 6, TRAY_Y, LANE_W_AREA + 12, 8, 3); ctx.fill();
-  ctx.strokeStyle = gate === 'play' ? '#1e4030' : '#402020'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(LANE_X, TRAY_Y + 4); ctx.lineTo(LANE_X + LANE_W_AREA, TRAY_Y + 4); ctx.stroke();
+  // gate banner over the base rail
   ctx.font = '10px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = gate === 'play' ? '#4caf7d' : '#e07070';
   ctx.fillText(gate === 'play'
-    ? '◀ PLAY: strike → tray → da Vinci lift → holding bank (closed loop)'
-    : 'BYPASS: pass-through → tray → 1982 wheel → lift ▶',
-    LANE_X + LANE_W_AREA / 2, TRAY_Y + 20);
-  for (const b of trayBalls) drawBall(b.x, TRAY_Y - 6, NOTES[b.lane].col, 9);
+    ? 'PLAY: strike → bounce back → drop rail → roll to corner → da Vinci lift → holding bank (closed loop, gravity only)'
+    : 'BYPASS: pass-through, no strike → same gravity return → lift',
+    LANE_X + LANE_W_AREA / 2, TRAY_Y + 18);
 
   // field balls (falling — every one visible)
   for (const b of fieldBalls) drawBall(b.x, b.y, NOTES[b.lane].col);
@@ -1061,9 +1009,185 @@ function setGate(g) {
 }
 gateBtn.onclick = () => setGate(gate === 'play' ? 'bypass' : 'play');
 
-document.getElementById('ovfMinus').onclick = () => { ovfRate = Math.max(0.1, Math.round((ovfRate - 0.1) * 10) / 10); upd(); };
-document.getElementById('ovfPlus').onclick = () => { ovfRate = Math.min(8.0, Math.round((ovfRate + 0.1) * 10) / 10); upd(); };
-function upd() { document.getElementById('ovfReadout').textContent = ovfRate.toFixed(1) + '×'; }
+// ── COGNITION: six perspectives of cognition on a rotatable cube ─
+// Canon (vault: 02 Concepts/Six Perspectives of Cognition):
+// Who & What → How many → Where → When → How → Why
+const PAL_NAMES = ['Deep Ember', 'Burnt Honey', 'Sage', 'Teal Spring', 'Twilight Blue',
+                   'Violet Dusk', 'Evening Gold', 'Rose Dawn', 'Gunmetal Silver', 'Moonlit Cream'];
+const PERSP = [
+  { n: 1, name: 'Who & What', icon: '🧍📦', op: 'Identify & categorize objects in the reference frame' },
+  { n: 2, name: 'How many',   icon: '🔢',   op: 'Quantify objects — count, amount, scale, rate, unit' },
+  { n: 3, name: 'Where',      icon: '📍',   op: 'Locate objects in a spatial coordinate system' },
+  { n: 4, name: 'When',       icon: '🕐',   op: 'Locate objects on a timeline' },
+  { n: 5, name: 'How',        icon: '➡️',   op: 'Map the processes that move the objects to a flowchart' },
+  { n: 6, name: 'Why',        icon: '⚖️',   op: 'Graph the key drivers of motion' },
+];
+// cube face order: front, right, back, left, top, bottom → perspectives 1..6
+const FACE_TF = [
+  'rotateY(0deg) translateZ(70px)',
+  'rotateY(90deg) translateZ(70px)',
+  'rotateY(180deg) translateZ(70px)',
+  'rotateY(-90deg) translateZ(70px)',
+  'rotateX(90deg) translateZ(70px)',
+  'rotateX(-90deg) translateZ(70px)',
+];
+const FACE_N = [[0,0,1],[1,0,0],[0,0,-1],[-1,0,0],[0,1,0],[0,-1,0]];
+
+const cogOverlay = document.getElementById('cogOverlay');
+const cogCube = document.getElementById('cogCube');
+const cogPanel = document.getElementById('cog-panel');
+let cogRX = -12, cogRY = 0, cogSel = 0, cogDragging = false, cogMoved = 0;
+
+for (let f = 0; f < 6; f++) {
+  const p = PERSP[f];
+  const el = document.createElement('div');
+  el.className = 'cog-face';
+  el.style.transform = FACE_TF[f];
+  el.innerHTML = `<div class="ico">${p.icon}</div><div class="lab">${p.n}. ${p.name}</div><div class="sub">select</div>`;
+  el.addEventListener('pointerdown', ev => ev.stopPropagation());
+  el.addEventListener('click', () => { if (cogMoved < 6) selectPersp(f); });
+  cogCube.appendChild(el);
+}
+
+function frontFace() {
+  const rx = cogRX * Math.PI / 180, ry = cogRY * Math.PI / 180;
+  let best = 0, bz = -2;
+  for (let f = 0; f < 6; f++) {
+    const [x, y, z] = FACE_N[f];
+    // rotateY(ry) then rotateX(rx)
+    const x1 = x * Math.cos(ry) + z * Math.sin(ry);
+    const z1 = -x * Math.sin(ry) + z * Math.cos(ry);
+    const y2 = y * Math.cos(rx) - z1 * Math.sin(rx);
+    const z2 = y * Math.sin(rx) + z1 * Math.cos(rx);
+    void y2;
+    if (z2 > bz) { bz = z2; best = f; }
+  }
+  return best;
+}
+
+function applyCube() {
+  cogCube.style.transform = `rotateX(${cogRX}deg) rotateY(${cogRY}deg)`;
+  const ff = frontFace();
+  [...cogCube.children].forEach((el, f) => el.classList.toggle('front', f === ff));
+  rotBtns.forEach((b, f) => b.classList.toggle('active', f === ff));
+}
+
+function snapCube() {
+  cogRX = Math.max(-90, Math.min(90, Math.round(cogRX / 90) * 90));
+  cogRY = Math.round(cogRY / 90) * 90;
+  cogCube.style.transition = 'transform .25s ease';
+  applyCube();
+  setTimeout(() => { cogCube.style.transition = ''; }, 280);
+}
+
+cogCube.addEventListener('pointerdown', e => {
+  cogDragging = true; cogMoved = 0;
+  cogCube.classList.add('dragging');
+  cogCube.setPointerCapture(e.pointerId);
+});
+cogCube.addEventListener('pointermove', e => {
+  if (!cogDragging) return;
+  cogRY += e.movementX * 0.45;
+  cogRX -= e.movementY * 0.45;
+  cogRX = Math.max(-90, Math.min(90, cogRX));
+  cogMoved += Math.abs(e.movementX) + Math.abs(e.movementY);
+  applyCube();
+});
+cogCube.addEventListener('pointerup', () => {
+  cogDragging = false; cogCube.classList.remove('dragging');
+  snapCube();
+});
+
+// rotation buttons — six panels, one per perspective
+const rotBtns = [];
+const rotWrap = document.getElementById('cogRotBtns');
+PERSP.forEach((p, f) => {
+  const b = document.createElement('button');
+  b.className = 'btn';
+  b.style.cssText = 'padding:5px 9px;font-size:11px;margin:0 3px;';
+  b.textContent = `${p.n}. ${p.name}`;
+  b.onclick = () => {
+    // rotate the cube so this face is front, then select
+    const targets = [[-12, 0], [0, -90], [0, -180], [0, 90], [90, 0], [-90, 0]];
+    cogRX = targets[f][0]; cogRY = targets[f][1];
+    cogCube.style.transition = 'transform .3s ease';
+    applyCube();
+    setTimeout(() => { cogCube.style.transition = ''; }, 320);
+    selectPersp(f);
+  };
+  rotWrap.appendChild(b); rotBtns.push(b);
+});
+
+// live census: every golf ball in the machine, by color
+function ballCensus() {
+  const cnt = new Array(NUM_LANES).fill(0);
+  for (const b of bankBalls) cnt[b.col]++;
+  for (const b of fieldBalls) cnt[b.lane]++;
+  for (const b of bounceBalls) cnt[b.lane]++;
+  for (const b of dropBalls) cnt[b.lane]++;
+  for (const b of rollBalls) cnt[b.lane]++;
+  for (const b of rideBalls) cnt[b.lane]++;
+  for (const b of bridgeBalls) cnt[b.lane]++;
+  for (const b of liftFeed) cnt[b.lane]++;
+  return cnt;
+}
+
+function renderPanel(f) {
+  const p = PERSP[f];
+  let html = `<div class="cog-p-head"><span class="cog-p-name">${p.icon} ${p.n}. ${p.name}</span>` +
+             `<span class="cog-p-op">${p.op}</span></div>`;
+  if (f === 0) {
+    // WHO & WHAT — Objects & Categories: all golf balls, grouped by color
+    const cnt = ballCensus();
+    const total = cnt.reduce((s, c) => s + c, 0);
+    const groups = cnt.filter(c => c > 0).length;
+    html += `<div class="obj-title">Objects & Categories</div>
+      <div class="obj-sum"><b>${total}</b> golf balls · <b>${groups}</b> color categories · live census — every ball in the machine, tracked by position and velocity</div>
+      <table class="obj-table">
+        <tr><th>COLOR</th><th>GOLF BALLS</th><th>NOTE</th><th>FREQ</th><th>COUNT</th></tr>`;
+    for (let i = 0; i < NUM_LANES; i++) {
+      if (cnt[i] === 0) continue;
+      const c = NOTES[i].col;
+      html += `<tr>
+        <td><span class="obj-dot" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span>${PAL_NAMES[i]}</td>
+        <td class="obj-note">golf balls</td>
+        <td class="obj-note">${NOTES[i].name}</td>
+        <td class="obj-note">${NOTES[i].freq.toFixed(2)} Hz</td>
+        <td class="obj-count">${cnt[i]}</td>
+      </tr>`;
+    }
+    html += `</table>`;
+  } else {
+    html += `<div class="cog-stub">Panel ${p.n} is a face of the cube — rotate to it and the panel loads next.<br>` +
+            `The six perspectives read the same machine: <b>Who & What</b> names the objects, ` +
+            `<b>How many</b> counts them, <b>Where</b> places them, <b>When</b> sequences them, ` +
+            `<b>How</b> flowcharts their motion, <b>Why</b> weighs the drivers.</div>`;
+  }
+  cogPanel.innerHTML = html;
+}
+
+function selectPersp(f) {
+  cogSel = f;
+  renderPanel(f);
+  applyCube();
+}
+
+let cogTimer = null;
+function openCog() {
+  cogOverlay.classList.add('open');
+  document.getElementById('cogBtn').classList.add('active');
+  selectPersp(0);                                  // perspective 1 loads first
+  applyCube();
+  cogTimer = setInterval(() => { if (cogSel === 0) renderPanel(0); }, 800);
+}
+function closeCog() {
+  cogOverlay.classList.remove('open');
+  document.getElementById('cogBtn').classList.remove('active');
+  if (cogTimer) { clearInterval(cogTimer); cogTimer = null; }
+}
+document.getElementById('cogBtn').onclick = () =>
+  cogOverlay.classList.contains('open') ? closeCog() : openCog();
+document.getElementById('cogCloseBtn').onclick = closeCog;
 
 document.getElementById('testBtn').onclick = () => {
   initAudio();
@@ -1085,34 +1209,49 @@ cv.addEventListener('pointerdown', e => {
 
 window.addEventListener('keydown', e => {
   if (e.key === 'g' || e.key === 'G') setGate(gate === 'play' ? 'bypass' : 'play');
-  else if (e.key === '-' || e.key === '_') { ovfRate = Math.max(0.1, ovfRate - 0.1); upd(); }
-  else if (e.key === '+' || e.key === '=') { ovfRate = Math.min(8.0, ovfRate + 0.1); upd(); }
   else if (e.key === ' ') { e.preventDefault(); pauseBtn.click(); }
   else if (e.key === 'r' || e.key === 'R') resetSong();
+  else if (e.key === 'c' || e.key === 'C') { cogOverlay.classList.contains('open') ? closeCog() : openCog(); }
+  else if (e.key === 'Escape' && cogOverlay.classList.contains('open')) closeCog();
   else if (/^[0-9]$/.test(e.key)) {
     const lane = e.key === '0' ? 9 : parseInt(e.key) - 1;
     if (lane < NUM_LANES) requestDrop(lane, true);
   }
 });
 
-function drive(seconds) {
-  const dtMs = 1000 / 60;
-  let until = nowMs + seconds * 1000;
-  while (nowMs < until) { nowMs += dtMs; if (rafCb) { const cb = rafCb; rafCb = null; cb(nowMs); } }
+// ═══ deterministic test suite ═══
+function run(seconds, label) {
+  const steps = Math.round(seconds * 60);
+  let minSupply = 999, maxSupply = 0, maxDiff = 0;
+  for (let s = 0; s < steps; s++) {
+    step(1/60);
+    const tot = totalBalls();
+    minSupply = Math.min(minSupply, tot); maxSupply = Math.max(maxSupply, tot);
+    const { pe, ke } = currentTotals();
+    const stored = pe + ke;
+    const harvested = noteCount * HARVEST_J;
+    const diff = Math.abs(energyIn - (energyOut + stored + harvested));
+    maxDiff = Math.max(maxDiff, diff);
+  }
+  return { label, supply: `${minSupply}-${maxSupply}`, notes: noteCount,
+           diff: maxDiff.toFixed(6), money: money.toFixed(2), flowers };
 }
-const probe = tag => {
-  const { pe, ke } = currentTotals();
-  const diff = energyIn - energyOut - pe - ke - noteCount * HARVEST_J;
-  console.log(`${tag} t=${(songMs/1000).toFixed(1)}s total=${totalBalls()} bank=${bankBalls.length} notes=${noteCount} diff=${diff.toFixed(6)}`);
-};
-drive(14); probe('A');
-drive(14); probe('B');
-drive(14); probe('C');
-[1,3,5,7,8,9].forEach(l => requestDrop(l, true));
-drive(10); probe('D-burst6');
-drive(16); probe('E');
-// bypass cycle test
-setGate && setGate('bypass');
-drive(8); probe('F-bypass');
-setGate && setGate('play');
-drive(14); probe('G-play');
+
+resetSong();
+const r1 = run(16, "Vivaldi Spring first half");
+for (const l of [0,2,4,6,8,9]) { requestDrop(l, true); }
+const r2 = run(18, "through song end + burst");
+gate = 'bypass';
+const r3 = run(8, "bypass gravity return");
+gate = 'play';
+const r4 = run(6, "back to play");
+
+console.log(JSON.stringify({
+  song_events: SONG.events.length,
+  song_totalMs: SONG.totalMs,
+  lanes_used: [...new Set(SONG.events.map(e=>e[0]))].sort((a,b)=>a-b),
+  r1, r2, r3, r4,
+  PE_PER_DROP: PE_PER_DROP.toFixed(4),
+  supply_now: totalBalls(),
+  census_total: ballCensus().reduce((s,c)=>s+c,0),
+}, null, 1));
