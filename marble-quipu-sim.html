@@ -40,6 +40,16 @@
   .btn.bypass.active { background: #3a1414; }
   .btn.cog { border-color: #7d5aa0; color: #d9b8f0; }
   .btn.cog:hover { background: #2a2040; border-color: #a47fd0; }
+  .season-wrap {
+    font-size: 10px; letter-spacing: 1px; color: #6c7c96;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .season-wrap select {
+    background: #101620; color: #e8c56a; border: 1px solid #3a4a5a;
+    border-radius: 5px; padding: 5px 8px; font: 11px monospace;
+    cursor: pointer; outline: none;
+  }
+  .season-wrap select:hover { border-color: #e8c56a; }
   .btn.cog.active { background: #241a33; }
   #cogOverlay {
     position: absolute; inset: 0; z-index: 8; display: none;
@@ -126,7 +136,15 @@
     <div class="sep"></div>
     <button class="btn cog" id="cogBtn">🧊 COGNITION</button>
     <div class="sep"></div>
-    <div class="readout">SONG <b>Vivaldi · The Four Seasons · Spring</b> ·
+    <label class="season-wrap">SEASON
+      <select id="seasonSel">
+        <option value="spring" selected>🌸 Spring</option>
+        <option value="summer">⛈ Summer</option>
+        <option value="autumn">🍂 Autumn</option>
+        <option value="winter">❄ Winter</option>
+      </select>
+    </label>
+    <div class="readout">SONG <b id="songLabel">Vivaldi · The Four Seasons · Spring</b> ·
     LIFT <b>6 × da Vinci wheels · 4.05 ft</b> · SUPPLY <b>28 = 110%</b> of max 25</div>
     <div class="sep"></div>
     <div class="readout" id="audioHint">🔇 sound off</div>
@@ -166,6 +184,9 @@
    cube — Who & What loads first (object.category: Marble → color →
    note); How many shows quantities of value as a time-sequential
    animated gear train (size = count, speed = frequency).
+   · FOUR SEASONS dropdown: Spring / Summer / Autumn / Winter, each
+   arranged for D Kurd; the DISPATCH LED strip on the right scrolls
+   one block per ball at the drop schedule — color = note to play.
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -261,30 +282,90 @@ const MAX_DEMAND = 25;
 const SUPPLY = Math.ceil(MAX_DEMAND * 1.10);          // = 28
 const slotX = k => LANE_X + 16 + k * (LANE_W_AREA - 32) / (SUPPLY - 1);
 
-// ── song: Vivaldi — The Four Seasons · Spring (La Primavera) ────
-// Opening ritornello, arranged for ALIENPAN D Kurd: the fanfare of
-// repeated notes, the leading-tone rise, and the descending bird-
-// song run. C4 stands in for C#, Bb3 for B — modal color on steel.
+// ── song: Vivaldi — The Four Seasons (tactical dropdown) ────────
+// All four seasons arranged for ALIENPAN D Kurd. C4 stands in for
+// C#, Bb3 for B — modal color on steel. One block per ball on the
+// dispatch LED strip; scroll speed IS the drop schedule.
 const QN = 460;
 const D3=0, A3=1, Bb3=2, C4=3, D4=4, E4=5, F4=6, G4=7, A4=8, C5=9;
-function buildSong() {
+
+function seasonEvents(key) {
+  if (key === 'spring') {
+    // La Primavera — opening ritornello: fanfare of repeated notes,
+    // leading-tone rise, descending bird-call run.
+    const qn = 460;
+    const mel = [
+      [D4,0],[D4,1],[D4,2],[C4,3],[D4,3.5],[E4,4],[A4,5],[A4,6],[G4,7],[F4,7.5],[E4,8],
+      [D4,9],[D4,10],[D4,11],[C4,12],[D4,12.5],[E4,13],[A4,14],[A4,15],[G4,16],[A4,16.5],[Bb3,17],
+      [A3,18],[C4,18.5],[D4,19],[E4,19.5],[F4,20],[E4,20.5],[D4,21],[C4,21.5],[Bb3,22],[A3,23],
+      [D4,24],[D4,24.5],[D4,25],[A4,26],[G4,27],[F4,27.5],[E4,28],[D4,29],[D3,30.5],
+    ];
+    const bass = [[D3,0],[A3,4],[Bb3,8],[D3,12],[A3,16],[Bb3,20],[C4,24],[A3,28],[D3,30.5]];
+    return { mel, bass, qn, beats: 31.5 };
+  }
+  if (key === 'summer') {
+    // L'Estate — Presto storm: gusting descending runs, thunder cadence.
+    const qn = 300;
+    const mel = [
+      [A4,0],[G4,0.5],[F4,1],[E4,1.5],[D4,2],[E4,2.5],[F4,3],[G4,3.5],
+      [A4,4],[A4,4.5],[G4,5],[F4,5.5],[E4,6],[F4,6.5],[G4,7],[A4,7.5],
+      [C5,8],[A4,8.5],[G4,9],[F4,9.5],[E4,10],[D4,10.5],[E4,11],[F4,11.5],
+      [G4,12],[F4,12.5],[E4,13],[D4,13.5],[C4,14],[D4,14.5],[E4,15],[D4,15.5],
+      [A3,16],[D4,16.5],[A4,17],[G4,17.5],[F4,18],[E4,18.5],[D4,19],[D3,20.5],[D4,21],
+      [A4,22],[G4,22.5],[F4,23],[E4,23.5],[D4,24],[C4,24.5],[D4,25],[E4,25.5],
+      [F4,26],[E4,26.5],[D4,27],[C4,27.5],[Bb3,28],[A3,28.5],[C4,29],[D4,29.5],
+      [E4,30],[F4,30.5],[G4,31],[A4,31.5],[C5,32],[A4,32.5],[G4,33],[F4,33.5],
+      [E4,34],[D4,35],
+    ];
+    const bass = [[D3,0],[A3,4],[Bb3,8],[F4,12],[D3,16],[A3,18],[D3,22],[Bb3,26],[A3,30],[D3,34],[D3,35]];
+    return { mel, bass, qn, beats: 36.5 };
+  }
+  if (key === 'autumn') {
+    // L'Autunno — harvest dance: triadic hops and a stomping refrain.
+    const qn = 380;
+    const mel = [
+      [D4,0],[F4,0.5],[A4,1],[D4,1.5],[A4,2],[F4,2.5],
+      [E4,3],[G4,3.5],[C5,4],[E4,4.5],[C5,5],[G4,5.5],
+      [F4,6],[A4,6.5],[D4,7],[F4,7.5],[A4,8],[G4,8.5],
+      [F4,9],[E4,9.5],[D4,10],[E4,10.5],[F4,11],[D4,11.5],
+      [A4,12],[A4,12.5],[G4,13],[G4,13.5],[F4,14],[E4,14.5],[D4,15],[D4,15.5],
+      [C4,16],[D4,16.5],[E4,17],[F4,17.5],[G4,18],[A4,18.5],[D4,19],[D4,19.5],
+      [A4,20],[G4,20.5],[F4,21],[E4,21.5],[D4,22],[A3,23],[D4,24],[D3,25.5],
+    ];
+    const bass = [[D3,0],[D3,3],[Bb3,6],[D3,9],[F4,12],[C4,16],[D3,20],[A3,23],[D3,25.5]];
+    return { mel, bass, qn, beats: 27 };
+  }
+  // winter — L'Inverno Largo: slow melody over pizzicato ice-rain.
+  const qn = 620;
   const mel = [
-    // statement 1 — "Spring has arrived"
-    [D4,0],[D4,1],[D4,2],[C4,3],[D4,3.5],[E4,4],[A4,5],[A4,6],[G4,7],[F4,7.5],[E4,8],
-    // statement 2 — echo
-    [D4,9],[D4,10],[D4,11],[C4,12],[D4,12.5],[E4,13],[A4,14],[A4,15],[G4,16],[A4,16.5],[Bb3,17],
-    // descending birdsong run
-    [A3,18],[C4,18.5],[D4,19],[E4,19.5],[F4,20],[E4,20.5],[D4,21],[C4,21.5],[Bb3,22],[A3,23],
-    // closing fanfare cadence
-    [D4,24],[D4,24.5],[D4,25],[A4,26],[G4,27],[F4,27.5],[E4,28],[D4,29],[D3,30.5],
+    [D4,0],[D4,1],[C4,2],[Bb3,3],
+    [A3,4],[Bb3,5],[C4,6],[D4,7],
+    [E4,8],[F4,9],[E4,10],[D4,11],
+    [C4,12],[Bb3,13],[A3,14],[A3,15],
+    [D4,16],[C4,17],[Bb3,18],[A3,19],
+    [Bb3,20],[C4,21],[D4,22],[D3,23.5],
   ];
-  const ev = mel.map(([n, q]) => [n, q * QN]);
-  const bass = [[D3,0],[A3,4],[Bb3,8],[D3,12],[A3,16],[Bb3,20],[C4,24],[A3,28],[D3,30.5]];
-  for (const [n, q] of bass) ev.push([n, q * QN]);
-  ev.sort((a, b) => a[1] - b[1]);
-  return { events: ev, totalMs: 31.5 * QN + 1500 };
+  const bass = [[D3,0],[D3,8],[D3,16],[D3,23.5]];
+  for (let h = 0.5; h <= 22.5; h += 1) bass.push([A3, h]);   // ice-rain pizzicato
+  return { mel, bass, qn, beats: 25 };
 }
-const SONG = buildSong();
+
+const SEASON_META = {
+  spring: { label: 'Vivaldi · The Four Seasons · Spring',  icon: '🌸' },
+  summer: { label: 'Vivaldi · The Four Seasons · Summer',  icon: '⛈' },
+  autumn: { label: 'Vivaldi · The Four Seasons · Autumn',  icon: '🍂' },
+  winter: { label: 'Vivaldi · The Four Seasons · Winter',  icon: '❄' },
+};
+
+function buildSeasonSong(key) {
+  const { mel, bass, qn, beats } = seasonEvents(key);
+  const ev = mel.map(([n, q]) => [n, q * qn]);
+  for (const [n, q] of bass) ev.push([n, q * qn]);
+  ev.sort((a, b) => a[1] - b[1]);
+  return { events: ev, totalMs: beats * qn + 1500, key };
+}
+let SONG = buildSeasonSong('spring');
+let currentSeason = 'spring';
 const FALL_MS = FALL_TIME * 1000;
 
 // ── state ────────────────────────────────────────────────────────
@@ -299,6 +380,7 @@ let energyIn = 0, energyOut = 0;                      // J — the ledger
 let accDispatch = 0, accStrike = 0;                   // decaying flow drivers
 let flashBeam = 0;                                    // camera → gate flash
 let camFlash = 0;
+let ledFlash = 0;                                     // dispatch LED read-line flash
 const liftAng = new Array(N_WHEELS).fill(0);
 const liftGlow = new Array(N_WHEELS).fill(0);
 
@@ -412,6 +494,7 @@ function requestDrop(lane, manual) {
   dispatchQueue.push({ lane, due: songMs + GATE_LEAD + FALL_MS, manual: !!manual });
   dropLog.push({ lane, seq: dropLog.length + 1 });          // time-sequential record for the gear train
   if (dropLog.length > 200) dropLog.shift();
+  if (!manual) ledFlash = 1;                                // the LED strip just told the machine
 }
 
 function enterBank(lane, fromX) {
@@ -498,6 +581,7 @@ function step(dt) {
   accStrike = Math.max(0, accStrike - dt * accStrike / 1.5 - 0.001 * dt);
   flashBeam = Math.max(0, flashBeam - dt * 3);
   camFlash = Math.max(0, camFlash - dt * 3);
+  ledFlash = Math.max(0, ledFlash - dt * 2.5);
 
   // schedule song notes through the gate router
   while (songIdx < SONG.events.length) {
@@ -1008,6 +1092,60 @@ function drawLedger() {
   ctx.fillText('potential energy at the top of the tank → motion → sound → money → flowers', gx0 + 84, y0 + 78);
 }
 
+// ── dispatch LED strip (right column): one block per ball, ──────
+// scrolling at the correct speed — the strip IS the note schedule.
+// Each block reaches the read line exactly when the gate must drop
+// its ball. Color = note, so the machine sees which ball to play.
+const LED_X0 = W - RIGHT_W + 8;
+const LED_X1 = W - 8;
+const LED_TOP = 70, LED_BOT = 738;
+const LED_READ_Y = 716;                                 // the read line
+const LED_PX_PER_MS = 0.09;                             // scroll speed: 90 px/s
+function drawLedStrip() {
+  const cx = (LED_X0 + LED_X1) / 2, bw = LED_X1 - LED_X0 - 14;
+  // strip body
+  ctx.fillStyle = '#0a0f16';
+  ctx.beginPath(); ctx.roundRect(LED_X0, LED_TOP, LED_X1 - LED_X0, LED_BOT - LED_TOP, 6); ctx.fill();
+  ctx.strokeStyle = '#1e2a3a'; ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#8c9ebe';
+  ctx.fillText('DISPATCH LED', cx, LED_TOP - 10);
+  ctx.font = '8px monospace'; ctx.fillStyle = '#4a5a70';
+  ctx.fillText('one block per ball', cx, LED_TOP - 0);
+  ctx.fillText('scroll speed = drop schedule', cx, LED_BOT + 12);
+  // read line — flashes when the strip tells the machine to drop
+  const rf = 0.35 + ledFlash * 0.65;
+  ctx.strokeStyle = `rgba(232,197,106,${rf})`; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(LED_X0 + 4, LED_READ_Y); ctx.lineTo(LED_X1 - 4, LED_READ_Y); ctx.stroke();
+  ctx.font = '8px monospace'; ctx.fillStyle = `rgba(232,197,106,${rf})`; ctx.textAlign = 'left';
+  ctx.fillText('READ → DROP', LED_X0 + 6, LED_READ_Y - 5);
+  // clip blocks to the strip
+  ctx.save();
+  ctx.beginPath(); ctx.rect(LED_X0 + 2, LED_TOP + 2, LED_X1 - LED_X0 - 4, LED_BOT - LED_TOP - 4); ctx.clip();
+  const bh = 20;                                        // one block per ball
+  const dropLead = FALL_MS + GATE_LEAD;                 // the gate commands the drop this far before the note sounds
+  for (let i = 0; i < SONG.events.length; i++) {
+    const [lane, st] = SONG.events[i];
+    const dropAt = st - dropLead;                       // when the machine must drop this ball
+    const y = LED_READ_Y - (dropAt - songMs) * LED_PX_PER_MS;
+    if (y < LED_TOP - bh || y > LED_BOT + bh) continue;
+    const c = NOTES[lane].col;
+    const played = y > LED_READ_Y + bh / 2;
+    const a = played ? Math.max(0, 1 - (y - LED_READ_Y) / 90) * 0.35 : 0.95;
+    if (a <= 0.02) continue;
+    ctx.fillStyle = rgb(c, a);
+    ctx.beginPath(); ctx.roundRect(cx - bw / 2, y - bh / 2, bw, bh - 3, 4); ctx.fill();
+    if (!played) {
+      ctx.strokeStyle = rgb(c, 0.9); ctx.lineWidth = 1; ctx.stroke();
+      ctx.font = '9px monospace'; ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(8,10,14,${Math.min(1, a + 0.15)})`;
+      ctx.fillText(`${i + 1} · ${NOTES[lane].name}`, cx, y + 4);
+    }
+  }
+  ctx.restore();
+}
+
 function draw() {
   ctx.fillStyle = '#05070b'; ctx.fillRect(0, 0, W, H);
 
@@ -1040,6 +1178,7 @@ function draw() {
 
   drawLiftColumn();
   drawReturnPath();
+  drawLedStrip();
 
   // ── instrument strip: the ALIENPAN ─────────────────────────────
   ctx.fillStyle = '#161210';
@@ -1464,6 +1603,14 @@ document.getElementById('testBtn').onclick = () => {
 const pauseBtn = document.getElementById('pauseBtn');
 pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE'; };
 document.getElementById('restartBtn').onclick = resetSong;
+
+// ── Four Seasons dropdown: tactical — pick the season, play it ──
+document.getElementById('seasonSel').onchange = e => {
+  currentSeason = e.target.value;
+  SONG = buildSeasonSong(currentSeason);
+  document.getElementById('songLabel').textContent = SEASON_META[currentSeason].label;
+  resetSong();                                          // fresh score, balls back to the bank
+};
 
 cv.addEventListener('pointerdown', e => {
   const rect = cv.getBoundingClientRect();
