@@ -144,6 +144,12 @@
         <option value="winter">❄ Winter</option>
       </select>
     </label>
+    <label class="season-wrap">ARTICULATION
+      <select id="articSel">
+        <option value="standard">Standard strikes</option>
+        <option value="micro" selected>Microtones · small hammers</option>
+      </select>
+    </label>
     <div class="readout">SONG <b id="songLabel">Vivaldi · The Four Seasons · Spring</b> ·
     LIFT <b>6 × da Vinci wheels · 4.05 ft</b> · SUPPLY <b>28 = 110%</b> of max 25</div>
     <div class="sep"></div>
@@ -190,6 +196,10 @@
    scrolls at the sampling rate (4 samples/beat = snapshot frequency,
    locked to tempo), and the flashing cursor marks the block the AI
    camera reads next to trigger the drop.
+   · WINTER MICROTONES (v4.5): an ARTICULATION dropdown switches the
+   machine between standard strikes and microtone edge-strikes. In
+   Winter, small-diameter hammers hit the tone-field EDGE and bend
+   notes ±25–50 cents — the Richter pulse shimmers, the ice cracks.
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -338,18 +348,29 @@ function seasonEvents(key) {
     const bass = [[D3,0],[D3,3],[Bb3,6],[D3,9],[F4,12],[C4,16],[D3,20],[A3,23],[D3,25.5]];
     return { mel, bass, qn, beats: 27 };
   }
-  // winter — L'Inverno Largo: slow melody over pizzicato ice-rain.
+  // winter — L'Inverno Largo (the Voices of Music original) floating
+  // over a Max Richter pulse: repeated D4 ostinato, minimal, hypnotic.
+  // Edge-strike microtones bend the ice: ±cents on selected pulses
+  // and melody notes. Cents live in the third slot of each event.
   const qn = 620;
   const mel = [
     [D4,0],[D4,1],[C4,2],[Bb3,3],
     [A3,4],[Bb3,5],[C4,6],[D4,7],
-    [E4,8],[F4,9],[E4,10],[D4,11],
-    [C4,12],[Bb3,13],[A3,14],[A3,15],
-    [D4,16],[C4,17],[Bb3,18],[A3,19],
+    [E4,8],[F4,9],[E4,10,-30],[D4,11],
+    [C4,12],[Bb3,13,-25],[A3,14],[A3,15],
+    [D4,16],[C4,17,40],[Bb3,18],[A3,19,-50],
     [Bb3,20],[C4,21],[D4,22],[D3,23.5],
   ];
-  const bass = [[D3,0],[D3,8],[D3,16],[D3,23.5]];
-  for (let h = 0.5; h <= 22.5; h += 1) bass.push([A3, h]);   // ice-rain pizzicato
+  const bass = [[D3,0],[D3,8],[A3,12],[D3,16],[D3,23.5]];
+  // the Richter pulse: D4 on every off-beat 8th, with microtonal
+  // shimmer — every 4th pulse bent +50¢, the last ice-crack -50¢.
+  for (let h = 0.5; h <= 22.5; h += 1) {
+    const step = Math.round(h * 2);                     // 8th-note index
+    let cents = 0;
+    if (step % 4 === 3) cents = 50;                     // shimmer pulses
+    if (h === 22.5) cents = -50;                        // final ice-crack
+    mel.push([D4, h, cents]);
+  }
   return { mel, bass, qn, beats: 25 };
 }
 
@@ -362,8 +383,12 @@ const SEASON_META = {
 
 function buildSeasonSong(key) {
   const { mel, bass, qn, beats } = seasonEvents(key);
-  const ev = mel.map(([n, q]) => [n, q * qn]);
-  for (const [n, q] of bass) ev.push([n, q * qn]);
+  // events: [lane, ms, cents] — cents = microtonal bend in 1/100 of
+  // a semitone (0 = standard 12-TET strike). Winter's ice bends notes;
+  // all other seasons and the standard articulation carry cents = 0.
+  const centsOf = c => (key === 'winter' && articulation === 'micro') ? (c || 0) : 0;
+  const ev = mel.map(([n, q, c]) => [n, q * qn, centsOf(c)]);
+  for (const [n, q, c] of bass) ev.push([n, q * qn, centsOf(c)]);
   ev.sort((a, b) => a[1] - b[1]);
   // tempo-locked sampling: the AI camera reads the LCD at 4 samples
   // per beat — snapshot frequency IS the tempo. Quantization error on
@@ -373,6 +398,7 @@ function buildSeasonSong(key) {
   return { events: ev, totalMs: beats * qn + 1500, key,
            qn, bpm, samplePeriod, sampleHz: 1000 / samplePeriod };
 }
+let articulation = 'micro';                             // 'standard' | 'micro' — microtones + small hammers
 let SONG = buildSeasonSong('spring');
 let currentSeason = 'spring';
 const FALL_MS = FALL_TIME * 1000;
@@ -407,6 +433,7 @@ let rideBalls = [];     // on a lift wheel: {wheel, ang, lane, py}
 let bridgeBalls = [];   // handoff bridge i (0..4) or top rail (5): {i, t, lane}
 let liftFeed = [];      // bottom-left corner → wheel-0 entry ramp: {t, lane}
 let hammerSwing = new Array(NUM_LANES).fill(0);
+let microFlag = new Array(NUM_LANES).fill(0);          // last strike used the small hammer
 let toneFlash = new Array(NUM_LANES).fill(0);
 let laneGlow = new Array(NUM_LANES).fill(0);
 let ripples = [];
@@ -445,7 +472,7 @@ function resetSong() {
   rideBalls = []; bridgeBalls = []; liftFeed = [];
   dispatchQueue = []; gateState.pending = null;
   ripples = []; snapHistory = [];
-  for (let i = 0; i < NUM_LANES; i++) { hammerSwing[i] = 0; toneFlash[i] = 0; laneGlow[i] = 0; }
+  for (let i = 0; i < NUM_LANES; i++) { hammerSwing[i] = 0; toneFlash[i] = 0; laneGlow[i] = 0; microFlag[i] = 0; }
   seedBank();
 }
 
@@ -469,15 +496,23 @@ document.getElementById('soundGate').addEventListener('pointerdown', initAudio);
 document.addEventListener('pointerdown', () => { if (!audioOn) initAudio(); });
 document.addEventListener('keydown', () => { if (!audioOn) initAudio(); });
 
-function playHandpan(freq) {
+function playHandpan(freq, cents) {
   if (!AC || AC.state !== 'running') return;
+  const c = cents || 0;
+  const micro = Math.abs(c) > 0.5;
+  const f = freq * Math.pow(2, c / 1200);              // the bend, in cents
   const t0 = AC.currentTime;
-  const partials = [[1.0, 1.0, 2.6], [2.0, 0.4, 2.1], [2.98, 0.18, 1.5]];
+  // micro strike = small-diameter hammer on the tone-field edge:
+  // thinner fundamental, brighter partial stack, shorter bloom — the
+  // edge node speaks instead of the main dome. Same steel, new voice.
+  const partials = micro
+    ? [[1.0, 0.55, 1.7], [2.0, 0.62, 1.3], [2.98, 0.34, 1.0], [4.1, 0.15, 0.7]]
+    : [[1.0, 1.0, 2.6], [2.0, 0.4, 2.1], [2.98, 0.18, 1.5]];
   for (const [ratio, amp, dec] of partials) {
     const o = AC.createOscillator();
     const g = AC.createGain();
     o.type = 'sine';
-    o.frequency.value = freq * ratio * (1 + (Math.random() - 0.5) * 0.0015);
+    o.frequency.value = f * ratio * (1 + (Math.random() - 0.5) * 0.0015);
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.exponentialRampToValueAtTime(amp * 0.32, t0 + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dec);
@@ -489,22 +524,23 @@ function playHandpan(freq) {
   for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
   const ns = AC.createBufferSource(); ns.buffer = nb;
   const nf = AC.createBiquadFilter(); nf.type = 'bandpass';
-  nf.frequency.value = freq * 2.5; nf.Q.value = 1.2;
-  const ng = AC.createGain(); ng.gain.value = 0.12;
+  nf.frequency.value = f * (micro ? 3.5 : 2.5); nf.Q.value = 1.2;
+  const ng = AC.createGain(); ng.gain.value = micro ? 0.2 : 0.12;
   ns.connect(nf); nf.connect(ng); ng.connect(master);
   ns.start(t0);
 }
 
-function strike(lane) {
+function strike(lane, cents) {
   hammerSwing[lane] = 1; toneFlash[lane] = 1; laneGlow[lane] = 1;
+  microFlag[lane] = Math.abs(cents || 0) > 0.5 ? 1 : 0; // small hammer for this strike
   ripples.push({ lane, age: 0 });
   noteCount++;
-  playHandpan(NOTES[lane].freq);
+  playHandpan(NOTES[lane].freq, cents);
 }
 
 // ── the gate router: camera reads snapshot → bank → gate → lane ─
-function requestDrop(lane, manual) {
-  dispatchQueue.push({ lane, due: songMs + GATE_LEAD + FALL_MS, manual: !!manual });
+function requestDrop(lane, manual, cents) {
+  dispatchQueue.push({ lane, due: songMs + GATE_LEAD + FALL_MS, manual: !!manual, cents: cents || 0 });
   dropLog.push({ lane, seq: dropLog.length + 1 });          // time-sequential record for the gear train
   if (dropLog.length > 200) dropLog.shift();
   if (!manual) ledFlash = 1;                                // the LED strip just told the machine
@@ -566,7 +602,7 @@ function stepGateAndBank(dt) {
     const ball = bankBalls.find(b => b.state === 'slide' && Math.abs(b.x - tx) < 7);
     if (arrived && ball) {
       bankBalls = bankBalls.filter(b => b !== ball);
-      fieldBalls.push({ lane: q.lane, x: gateState.x, y: BALL_START_Y, vy: 0 });
+      fieldBalls.push({ lane: q.lane, x: gateState.x, y: BALL_START_Y, vy: 0, cents: q.cents || 0 });
       accDispatch += peOfY(BALL_START_Y);   // flow driver only — lift work is the ledger's IN
       flashBeam = 1; camFlash = 1;
       dispatchQueue.shift();
@@ -599,10 +635,10 @@ function step(dt) {
   // schedule song notes into the LCD read queue; the AI camera
   // dispatches them on its next sample tick (tempo-locked sampling)
   while (songIdx < SONG.events.length) {
-    const [lane, st] = SONG.events[songIdx];
+    const [lane, st, cents] = SONG.events[songIdx];
     const dropAt = st - FALL_MS - GATE_LEAD;
     if (songMs >= dropAt - SONG.samplePeriod / 2) {     // half-sample bias centers the error
-      lcdReadQueue.push({ lane, dropAt });
+      lcdReadQueue.push({ lane, dropAt, cents: cents || 0 });
       songIdx++;
     } else break;
   }
@@ -615,7 +651,8 @@ function step(dt) {
     samplePhase -= SONG.samplePeriod;
     sampleFlash = 1;
     while (lcdReadQueue.length && lcdReadQueue[0].dropAt <= songMs) {
-      requestDrop(lcdReadQueue.shift().lane, false);    // the LCD just told the machine
+      const q = lcdReadQueue.shift();
+      requestDrop(q.lane, false, q.cents);              // the LCD just told the machine
     }
   }
 
@@ -641,7 +678,7 @@ function step(dt) {
     b.vy += G_PX * dt; b.y += b.vy * dt;
     if (b.y >= BALL_HIT_Y) {
       if (gate === 'play') {
-        strike(b.lane);
+        strike(b.lane, b.cents);
         energyOut += SOUND_J;
         money += NOTE_VALUE;
         const nf = Math.floor(money / FLOWER_COST);
@@ -1176,7 +1213,7 @@ function drawLedStrip() {
 
   // ── the blocks: top edge = drop command time, height = interval ──
   for (let i = 0; i < SONG.events.length; i++) {
-    const [lane] = SONG.events[i];
+    const [lane, , cents] = SONG.events[i];
     const y = yOfDrop(dropTimes[i]);                    // top edge = drop time
     const interval = (i + 1 < SONG.events.length ? dropTimes[i + 1] - dropTimes[i] : sp);
     const bh = Math.max(8, Math.min(44, interval * LED_PX_PER_MS));
@@ -1192,7 +1229,8 @@ function drawLedStrip() {
       if (bh >= 13) {
         ctx.font = '9px monospace'; ctx.textAlign = 'center';
         ctx.fillStyle = `rgba(8,10,14,${Math.min(1, a + 0.15)})`;
-        ctx.fillText(`${i + 1} · ${NOTES[lane].name}`, cx, y - bh / 2 + 3);
+        const tag = cents ? `${cents > 0 ? '+' : ''}${cents}¢` : '';
+        ctx.fillText(`${i + 1} · ${NOTES[lane].name}${tag}`, cx, y - bh / 2 + 3);
       }
     }
     // ── the flashing cursor: the block the AI reads on its next
@@ -1287,19 +1325,31 @@ function draw() {
     const swing = hammerSwing[i];
     const plunge = Math.pow(swing, 0.6) * 16;
     const hy = INSTR_Y + 8;
+    // micro strikes use the small-diameter hammer: narrower body,
+    // smaller head, striking the tone-field EDGE (offset right) so the
+    // edge node speaks — same steel, new voice.
+    const micro = microFlag[i] === 1;
+    const hw = micro ? 13 : 18;
+    const hx = micro ? cx + LANE_W * 0.20 : cx;         // edge-strike position
     ctx.fillStyle = '#2a303a';
-    ctx.beginPath(); ctx.roundRect(cx - 9, hy, 18, 14, 3); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(hx - hw / 2, hy, hw, micro ? 11 : 14, 3); ctx.fill();
     ctx.strokeStyle = swing > 0.05 ? rgb(c) : '#3a4352'; ctx.lineWidth = 1;
-    ctx.strokeRect(cx - 9, hy, 18, 14);
-    ctx.strokeStyle = '#8a95a5'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(cx, hy + 14); ctx.lineTo(cx, hy + 18 + plunge); ctx.stroke();
+    ctx.strokeRect(hx - hw / 2, hy, hw, micro ? 11 : 14);
+    ctx.strokeStyle = '#8a95a5'; ctx.lineWidth = micro ? 2 : 3;
+    ctx.beginPath(); ctx.moveTo(hx, hy + (micro ? 11 : 14)); ctx.lineTo(hx, hy + 18 + plunge); ctx.stroke();
     const mY = hy + 22 + plunge;
-    ctx.beginPath(); ctx.arc(cx, mY, 6, 0, 7);
+    const mR = micro ? 3.5 : 6;
+    ctx.beginPath(); ctx.arc(hx, mY, mR, 0, 7);
     ctx.fillStyle = swing > 0.05 ? rgb(c) : '#586270'; ctx.fill();
     ctx.strokeStyle = '#14181f'; ctx.lineWidth = 1; ctx.stroke();
     if (swing > 0.55) {
-      ctx.beginPath(); ctx.arc(cx, FIELD_Y - 6, 10, 0, 7);
+      ctx.beginPath(); ctx.arc(hx, FIELD_Y - 6, micro ? 6 : 10, 0, 7);
       ctx.fillStyle = rgb(c, (swing - 0.55) * 1.4); ctx.fill();
+    }
+    if (micro) {                                          // the small hammer's mark
+      ctx.font = '8px monospace'; ctx.textAlign = 'center';
+      ctx.fillStyle = rgb(c, 0.85);
+      ctx.fillText('µ', hx, hy - 3);
     }
   }
 
@@ -1686,6 +1736,11 @@ document.getElementById('seasonSel').onchange = e => {
   SONG = buildSeasonSong(currentSeason);
   document.getElementById('songLabel').textContent = SEASON_META[currentSeason].label;
   resetSong();                                          // fresh score, balls back to the bank
+};
+document.getElementById('articSel').onchange = e => {
+  articulation = e.target.value;                        // microtones live only in Winter
+  SONG = buildSeasonSong(currentSeason);
+  resetSong();
 };
 
 cv.addEventListener('pointerdown', e => {
