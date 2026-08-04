@@ -163,7 +163,9 @@
    bottom-left corner for da Vinci lift pickup. The 1982 overflow
    wheel is gone; geometry does the work.
    · COGNITION: the six perspectives of cognition as a rotatable
-   cube — Who & What loads first: every golf ball, grouped by color.
+   cube — Who & What loads first (object.category: Marble → color →
+   note); How many shows quantities of value as a time-sequential
+   animated gear train (size = count, speed = frequency).
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -335,10 +337,15 @@ function totalBalls() {
          rollBalls.length + rideBalls.length + bridgeBalls.length + liftFeed.length;
 }
 
+// ── drop log: time-sequential record of every ball dropped (gear train) ─
+let dropLog = [];
+let gearCanvas = null, gearCtx = null, gearAnim = null;
+
 function resetSong() {
   songMs = -FALL_MS - 800; songIdx = 0; noteCount = 0;
   money = 0; flowers = 0; energyIn = 0; energyOut = 0;
   accDispatch = 0; accStrike = 0;
+  dropLog = [];
   fieldBalls = []; bounceBalls = []; dropBalls = []; rollBalls = [];
   rideBalls = []; bridgeBalls = []; liftFeed = [];
   dispatchQueue = []; gateState.pending = null;
@@ -403,6 +410,8 @@ function strike(lane) {
 // ── the gate router: camera reads snapshot → bank → gate → lane ─
 function requestDrop(lane, manual) {
   dispatchQueue.push({ lane, due: songMs + GATE_LEAD + FALL_MS, manual: !!manual });
+  dropLog.push({ lane, seq: dropLog.length + 1 });          // time-sequential record for the gear train
+  if (dropLog.length > 200) dropLog.shift();
 }
 
 function enterBank(lane, fromX) {
@@ -1143,7 +1152,7 @@ const PAL_NAMES = ['Deep Ember', 'Burnt Honey', 'Sage', 'Teal Spring', 'Twilight
                    'Violet Dusk', 'Evening Gold', 'Rose Dawn', 'Gunmetal Silver', 'Moonlit Cream'];
 const PERSP = [
   { n: 1, name: 'Who & What', icon: '🧍📦', op: 'Identify & categorize objects in the reference frame' },
-  { n: 2, name: 'How many',   icon: '🔢',   op: 'Quantify objects — count, amount, scale, rate, unit' },
+  { n: 2, name: 'How many',   icon: '🔢',   op: 'Quantities of value — things that can be measured in numbers: mass, frequency, count' },
   { n: 3, name: 'Where',      icon: '📍',   op: 'Locate objects in a spatial coordinate system' },
   { n: 4, name: 'When',       icon: '🕐',   op: 'Locate objects on a timeline' },
   { n: 5, name: 'How',        icon: '➡️',   op: 'Map the processes that move the objects to a flowchart' },
@@ -1259,26 +1268,155 @@ function ballCensus() {
   return cnt;
 }
 
+// ── perspective 2: How many — quantities of value, measured in numbers ─
+// One spinning gear per dropped ball, laid out in drop order (a time-
+// sequential gear train). Gear SIZE ∝ count of that note; gear SPEED ∝
+// note frequency. Adjacent gears mesh, so the train visibly turns.
+function gearRadiusForLane(lane, counts) {
+  const maxCnt = Math.max(...counts, 1);
+  const minR = 10, maxR = 30;
+  return minR + (maxR - minR) * (counts[lane] / maxCnt);
+}
+
+function drawCogGear(ctx, x, y, r, angle, rgb, label) {
+  const teeth = Math.max(8, Math.round(r * 0.9));
+  const toothH = r * 0.28;
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(angle);
+  // teeth
+  ctx.beginPath();
+  for (let i = 0; i < teeth; i++) {
+    const a0 = (i / teeth) * Math.PI * 2;
+    const a1 = ((i + 0.38) / teeth) * Math.PI * 2;
+    const a2 = ((i + 0.5) / teeth) * Math.PI * 2;
+    const a3 = ((i + 0.88) / teeth) * Math.PI * 2;
+    ctx.lineTo(Math.cos(a0) * r, Math.sin(a0) * r);
+    ctx.lineTo(Math.cos(a1) * (r + toothH), Math.sin(a1) * (r + toothH));
+    ctx.lineTo(Math.cos(a2) * (r + toothH), Math.sin(a2) * (r + toothH));
+    ctx.lineTo(Math.cos(a3) * r, Math.sin(a3) * r);
+  }
+  ctx.closePath();
+  ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.92)`;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+  // hub
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.32, 0, Math.PI * 2);
+  ctx.fillStyle = '#0d1420'; ctx.fill();
+  ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.7)`; ctx.stroke();
+  // spoke to show rotation
+  ctx.beginPath();
+  ctx.moveTo(0, -r * 0.32); ctx.lineTo(0, -r * 0.85);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+  // label (unrotated)
+  if (label) {
+    ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText(label, x, y + r + toothH + 11);
+  }
+}
+
+function startGearTrain() {
+  stopGearTrain();
+  const cv = document.getElementById('gearCanvas');
+  if (!cv) return;
+  gearCanvas = cv; gearCtx = cv.getContext('2d');
+  let last = performance.now();
+  let simT = 0;
+  const frame = now => {
+    if (!gearCanvas) return;
+    const dt = Math.min(0.1, (now - last) / 1000); last = now; simT += dt;
+    renderGears(simT);
+    gearAnim = requestAnimationFrame(frame);
+  };
+  gearAnim = requestAnimationFrame(frame);
+}
+function stopGearTrain() {
+  if (gearAnim) cancelAnimationFrame(gearAnim);
+  gearAnim = null; gearCanvas = null; gearCtx = null;
+}
+
+function renderGears(simT) {
+  const ctx = gearCtx, cv = gearCanvas;
+  if (!ctx || !cv) return;
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const counts = ballCensus();
+  const drops = dropLog;
+  if (!drops.length) {
+    ctx.font = '11px monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillText('no drops yet — the train builds as balls fall', W / 2, H / 2);
+    return;
+  }
+  // lay gears left→right in drop order, alternating vertical offset to mesh
+  const shown = drops.slice(-14);                       // last 14 keep it readable
+  const pad = 34;
+  const span = (W - pad * 2);
+  const spacing = shown.length > 1 ? span / (shown.length - 1) : 0;
+  const baseY = H * 0.52;
+  for (let i = 0; i < shown.length; i++) {
+    const d = shown[i];
+    const n = NOTES[d.lane];
+    const r = gearRadiusForLane(d.lane, counts);
+    const x = shown.length === 1 ? W / 2 : pad + i * spacing;
+    // alternate above/below the center line so adjacent gears mesh
+    const y = baseY + (i % 2 === 0 ? -(r * 0.18) : (r * 0.18));
+    // speed ∝ frequency; direction alternates like a real gear train
+    const omega = (n.freq / 146.83) * 0.9 * (i % 2 === 0 ? 1 : -1);
+    const angle = simT * omega;
+    drawCogGear(ctx, x, y, r, angle, n.col, `${d.seq}·${n.name}`);
+  }
+  // caption
+  ctx.font = '9px monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText(`gear ${shown[0].seq} dropped first → gear ${shown[shown.length-1].seq} last · size = count · speed = frequency`, 8, H - 6);
+}
+
 function renderPanel(f) {
   const p = PERSP[f];
   let html = `<div class="cog-p-head"><span class="cog-p-name">${p.icon} ${p.n}. ${p.name}</span>` +
              `<span class="cog-p-op">${p.op}</span></div>`;
   if (f === 0) {
-    // WHO & WHAT — Objects & Categories: all golf balls, grouped by color
+    // WHO & WHAT — Objects & Categories. Naming standard: object.category.
+    // Left column = Marble (the object), then color, then note.
+    // Quantities (mass, freq, count) live on perspective 2: How many.
     const cnt = ballCensus();
     const total = cnt.reduce((s, c) => s + c, 0);
     const groups = cnt.filter(c => c > 0).length;
     html += `<div class="obj-title">Objects & Categories</div>
-      <div class="obj-sum"><b>${total}</b> golf balls · <b>${groups}</b> color categories · live census — every ball in the machine, tracked by position and velocity</div>
+      <div class="obj-sum"><b>${total}</b> golf balls · <b>${groups}</b> color categories · naming standard <b>object.category</b></div>
       <table class="obj-table">
-        <tr><th>COLOR</th><th>GOLF BALLS</th><th>NOTE</th><th>FREQ</th><th>COUNT</th></tr>`;
+        <tr><th>MARBLE</th><th>COLOR</th><th>NOTE</th></tr>`;
+    for (let i = 0; i < NUM_LANES; i++) {
+      if (cnt[i] === 0) continue;
+      const c = NOTES[i].col;
+      html += `<tr>
+        <td class="obj-note">Marble</td>
+        <td><span class="obj-dot" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span>${PAL_NAMES[i]}</td>
+        <td class="obj-note">${NOTES[i].name}</td>
+      </tr>`;
+    }
+    html += `</table>`;
+  } else if (f === 1) {
+    // HOW MANY — quantities of value: things that can be measured in numbers.
+    // Mass, frequency, and count — represented dynamically as a spinning
+    // gear train laid out in time-sequential drop order.
+    const cnt = ballCensus();
+    const totalMass = (cnt.reduce((s, c) => s + c, 0) * BALL_MASS * 1000).toFixed(1);
+    html += `<div class="obj-title">Quantities of Value</div>
+      <div class="obj-sum">things that can be measured in numbers — <b>mass</b> ${totalMass} g in play · <b>frequency</b> per note · <b>count</b> live
+      · one gear per dropped ball, in drop order · <b>size = count</b>, <b>speed = frequency</b></div>
+      <canvas id="gearCanvas" width="640" height="180" style="width:100%;height:180px;background:#0a0f16;border:1px solid #1e2a3a;border-radius:6px;margin-top:8px;"></canvas>
+      <table class="obj-table" style="margin-top:8px;">
+        <tr><th>COLOR</th><th>NOTE</th><th>MASS</th><th>FREQ</th><th>COUNT</th></tr>`;
     for (let i = 0; i < NUM_LANES; i++) {
       if (cnt[i] === 0) continue;
       const c = NOTES[i].col;
       html += `<tr>
         <td><span class="obj-dot" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span>${PAL_NAMES[i]}</td>
-        <td class="obj-note">golf balls</td>
         <td class="obj-note">${NOTES[i].name}</td>
+        <td class="obj-note">${(cnt[i] * BALL_MASS * 1000).toFixed(1)} g</td>
         <td class="obj-note">${NOTES[i].freq.toFixed(2)} Hz</td>
         <td class="obj-count">${cnt[i]}</td>
       </tr>`;
@@ -1291,10 +1429,12 @@ function renderPanel(f) {
             `<b>How</b> flowcharts their motion, <b>Why</b> weighs the drivers.</div>`;
   }
   cogPanel.innerHTML = html;
+  if (f === 1) startGearTrain();
 }
 
 function selectPersp(f) {
   cogSel = f;
+  stopGearTrain();
   renderPanel(f);
   applyCube();
 }
@@ -1310,6 +1450,7 @@ function openCog() {
 function closeCog() {
   cogOverlay.classList.remove('open');
   document.getElementById('cogBtn').classList.remove('active');
+  stopGearTrain();
   if (cogTimer) { clearInterval(cogTimer); cogTimer = null; }
 }
 document.getElementById('cogBtn').onclick = () =>
