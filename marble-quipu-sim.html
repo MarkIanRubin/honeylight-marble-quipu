@@ -13,8 +13,15 @@
     display: flex; flex-direction: column; align-items: center;
     min-height: 100vh; padding: 10px;
   }
-  #wrap { width: 100%; max-width: 1440px; }
+  #wrap { width: 100%; max-width: 1440px; position: relative; }
   canvas { width: 100%; display: block; border-radius: 10px; background: #05070b; }
+  #soundGate {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(5,7,11,.55); border-radius: 10px; cursor: pointer; z-index: 5;
+    flex-direction: column; gap: 8px;
+  }
+  #soundGate .big { font-size: 22px; color: #e8c56a; letter-spacing: 1px; }
+  #soundGate .small { font-size: 12px; color: #8fa3c4; }
   #controls {
     display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
     margin-top: 10px; padding: 10px 14px;
@@ -47,23 +54,28 @@
 <body>
 <div id="wrap">
   <canvas id="cv"></canvas>
+  <div id="soundGate">
+    <div class="big">🔊 CLICK TO START SOUND</div>
+    <div class="small">browsers require one click before audio can play — the quipu is ready</div>
+  </div>
   <div id="controls">
     <button class="btn play active" id="gateBtn">▶ GATE: PLAY</button>
     <div class="sep"></div>
     <button class="btn" id="ovfMinus">−</button>
-    <div class="readout">OVERFLOW<br><b id="ovfReadout">1.0×</b></div>
+    <div class="readout">OVERFLOW WHEEL<br><b id="ovfReadout">1.0×</b></div>
     <button class="btn" id="ovfPlus">+</button>
     <div class="sep"></div>
+    <button class="btn" id="testBtn">🔔 TEST NOTES</button>
     <button class="btn" id="pauseBtn">⏸ PAUSE</button>
     <button class="btn" id="restartBtn">↺ RESTART</button>
     <div class="sep"></div>
-    <div class="readout">LIFT MOTOR <b>0.25 HP · 132 RPM</b> · 10% surplus<br>
-    INSTRUMENT <b>ALIENPAN · D Kurd · 10 notes</b></div>
+    <div class="readout">LIFT MOTOR <b>0.25 HP · 132 RPM</b><br>
+    INSTRUMENT <b>ALIENPAN · D Kurd · 10 notes</b> · SUPPLY <b>110%</b> of max</div>
     <div class="sep"></div>
-    <div class="readout" id="audioHint">🔇 click anywhere to enable sound</div>
+    <div class="readout" id="audioHint">🔇 sound off</div>
   </div>
   <div id="status">
-    <kbd>G</kbd> gate &nbsp; <kbd>−</kbd>/<kbd>+</kbd> overflow rate &nbsp; <kbd>SPACE</kbd> pause &nbsp;
+    <kbd>G</kbd> gate &nbsp; <kbd>−</kbd>/<kbd>+</kbd> overflow wheel rate &nbsp; <kbd>SPACE</kbd> pause &nbsp;
     <kbd>R</kbd> restart &nbsp; <kbd>1–0</kbd> drop lanes 1–10 &nbsp; <kbd>CLICK</kbd> lane to drop
   </div>
 </div>
@@ -71,13 +83,20 @@
 <script>
 'use strict';
 /* ══════════════════════════════════════════════════════════════════
-   HONEYLIGHT MARBLE QUIPU — full system simulator
-   Rubin Lifting Ramp (double counter-rotating helix) lifts golf balls
-   5 ft to the top of 10 lanes → balls fall → solenoid hammers strike
-   an ALIENPAN handpan (D Minor Kurd, 10 notes) → return tray routes
-   balls to the lift (PLAY gate) or the overflow ramp (BYPASS gate).
-   The overflow ramp is the identical twin-helix running in reverse;
-   its rate is tunable. Balls never deplete: closed loop.
+   HONEYLIGHT MARBLE QUIPU — full system simulator (v2)
+   Rubin Lifting Ramp (twin counter-rotating helixes) lifts golf balls
+   to the top of 10 lanes → balls fall → solenoid hammers strike an
+   ALIENPAN handpan (D Minor Kurd, 10 notes) → return tray routes
+   balls to the lift (PLAY gate) or the 1982 overflow machine (BYPASS).
+
+   v2 fixes per Mark 2026-08-04:
+   · overflow = the 1982 Rubin machine: 6-pocket wheel, counter-clock-
+     wise, two magnets, feed ramp entering at lower right
+   · ball supply is CONSERVED: exactly 28 balls = 110% of max demand
+     (25). Balls are never created; they only move between stages.
+   · hammer strikes are visible: solenoid plungers drive mallets onto
+     the handpan tone fields; each strike flashes the lane's LED color
+   · LED quipu bar + tone-field colors = Twilight Goat Pasture
    ══════════════════════════════════════════════════════════════════ */
 
 // ── canvas setup ─────────────────────────────────────────────────
@@ -86,33 +105,39 @@ const ctx = cv.getContext('2d');
 const W = 1440, H = 860;
 function fit() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const rect = cv.getBoundingClientRect();
   cv.width = W * dpr; cv.height = H * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 fit(); window.addEventListener('resize', fit);
 
 // ── layout constants ─────────────────────────────────────────────
-const RAMP_W = 132, HEADER_H = 56, FOOTER_H = 96;
+const RAMP_W = 150, HEADER_H = 56, FOOTER_H = 96, INSTR_H = 88;
 const LANE_X = RAMP_W, LANE_Y = HEADER_H;
-const LANE_W_AREA = W - 2 * RAMP_W, LANE_H = H - HEADER_H - FOOTER_H;
+const LANE_W_AREA = W - 2 * RAMP_W;
+const LANE_H = H - HEADER_H - FOOTER_H - INSTR_H;   // fall zone only
 const NUM_LANES = 10;
 const LANE_W = LANE_W_AREA / NUM_LANES;
-const BALL_R = 13;
-const HAMMER_Y = LANE_Y + LANE_H - 16;
-const RAMP_TOP = LANE_Y + 8, RAMP_BOT = HAMMER_Y;
-const RAMP_HEIGHT = RAMP_BOT - RAMP_TOP;
-const HELIX_AMP = 46, HELIX_TURNS = 7, HELIX_SEGS = 120;
-const LIFT_CX = RAMP_W / 2 + 2;
-const OVFL_CX = W - RAMP_W / 2 - 2;
+const BALL_R = 12;
+const INSTR_Y = LANE_Y + LANE_H;                     // instrument strip top
 const BALL_START_Y = LANE_Y + BALL_R + 4;
-const BALL_HIT_Y = HAMMER_Y - BALL_R - 2;
-const FALL_TIME = 0.65;                       // seconds, 5 ft drop
+const BALL_HIT_Y = INSTR_Y - BALL_R - 2;             // strike line
+const FALL_TIME = 0.65;
 const G_PX = 2 * (BALL_HIT_Y - BALL_START_Y) / (FALL_TIME * FALL_TIME);
-const LIFT_SPEED = 45 / 60 / HELIX_TURNS;     // progress/sec at 45 RPM
+const HELIX_AMP = 42, HELIX_TURNS = 7, HELIX_SEGS = 120;
+const RAMP_TOP = LANE_Y + 8, RAMP_BOT = INSTR_Y + 10;
+const RAMP_HEIGHT = RAMP_BOT - RAMP_TOP;
+const LIFT_CX = RAMP_W / 2 + 4;
+const LIFT_SPEED = 1 / 1.35;                          // helix transit ≈1.35 s
+// ── the 1982 overflow machine (right column) ────────────────────
+const WHEEL_CX = W - RAMP_W / 2 - 4;
+const WHEEL_CY = RAMP_TOP + RAMP_HEIGHT * 0.40;
+const WHEEL_R = 62;
+const WHEEL_POCKETS = 6;
+const ENTRY_ANG = -0.72;                              // rad, lower-right feed
+const EXIT_ANG  = 2.35;                               // rad, upper-left eject
+const MAG_A = 2.6, MAG_B = -0.15;                     // magnet positions (rad)
 
 // ── ALIENPAN D Minor Kurd — 10 notes, 440 Hz ────────────────────
-// Twilight Goat Pasture palette, extended to 10
 const NOTES = [
   { name: 'D3',  freq: 146.83, col: [195, 45, 45]  },  // Deep Ember
   { name: 'A3',  freq: 220.00, col: [210, 115, 20] },  // Burnt Honey
@@ -127,8 +152,14 @@ const NOTES = [
 ];
 const laneCx = l => LANE_X + l * LANE_W + LANE_W / 2;
 
+// ── ball supply: conserved, 110% of max demand ──────────────────
+// max simultaneous demand ≈ 25 (fall 2 + hoppers 20 + tray 3)
+const MAX_DEMAND = 25;
+const SUPPLY = Math.ceil(MAX_DEMAND * 1.10);          // = 28
+const HOPPER_MAX = 2;
+
 // ── song: Ode to Joy, arranged for D Kurd ────────────────────────
-const QN = 460; // ms per beat
+const QN = 460;
 const D3=0, A3=1, Bb3=2, C4=3, D4=4, E4=5, F4=6, G4=7, A4=8, C5=9;
 function buildSong() {
   const ev = [];
@@ -143,52 +174,67 @@ function buildSong() {
 }
 const SONG = buildSong();
 const FALL_MS = FALL_TIME * 1000;
-const MIN_GAP = 320; // ms between drops in same lane
 
 // ── state ────────────────────────────────────────────────────────
-let gate = 'play';            // 'play' | 'bypass'
-let ovfRate = 1.0;            // overflow multiplier 0.1–8.0
+let gate = 'play';
+let ovfRate = 1.0;
 let paused = false;
+let audioOn = false;
 let songMs = -FALL_MS;
 let songIdx = 0;
-let phase = 0;                // helix rotation phase (rad)
-let lastDrop = new Array(NUM_LANES).fill(-1e9);
-let fieldBalls = [];          // {lane, x, y, vy}
-let liftBalls = [];           // {p, helix, lane}
-let ovflBalls = [];           // {p, helix, lane}
-let laneGlow = new Array(NUM_LANES).fill(0);
-let hammerGlow = new Array(NUM_LANES).fill(0);
-let hammerPlunge = new Array(NUM_LANES).fill(0);
+let phase = 0;
+let wheelAng = 0;
 let noteCount = 0;
+let fieldBalls = [];    // falling: {lane, x, y, vy}
+let liftBalls = [];     // on helix: {p, helix, lane}
+let hopper = [];        // per-lane queue at lane top
+let trayBalls = [];     // rolling on return tray: {x, tx, lane, t}
+let feedBalls = [];     // on the 1982 feed ramp: {t, lane}
+let wheelBalls = [];    // in wheel pockets: {ang, lane}
+let retBalls = [];      // on the return chute to lift base: {t, lane}
+let hammerSwing = new Array(NUM_LANES).fill(0);
+let toneFlash = new Array(NUM_LANES).fill(0);
+let laneGlow = new Array(NUM_LANES).fill(0);
+let ripples = [];       // {lane, age}
 
-// seed the closed loop with balls already in transit
-for (let i = 0; i < 5; i++) liftBalls.push({ p: (i + 0.5) / 5, helix: i % 2, lane: i * 2 });
-for (let i = 0; i < 3; i++) ovflBalls.push({ p: 1 - (i + 0.5) / 3, helix: i % 2, lane: i * 3 + 1 });
+for (let i = 0; i < NUM_LANES; i++) hopper.push([]);
+// seed: 2 balls per hopper (20) + 8 on the lift = 28 = SUPPLY
+for (let i = 0; i < NUM_LANES; i++) for (let k = 0; k < HOPPER_MAX; k++) hopper[i].push({});
+for (let i = 0; i < 8; i++) liftBalls.push({ p: (i + 0.5) / 8, helix: i % 2, lane: (i * 3) % NUM_LANES });
+
+function totalBalls() {
+  return fieldBalls.length + liftBalls.length + trayBalls.length + feedBalls.length +
+         wheelBalls.length + retBalls.length + hopper.reduce((s, h) => s + h.length, 0);
+}
 
 function resetSong() {
   songMs = -FALL_MS; songIdx = 0; noteCount = 0;
-  fieldBalls = [];
-  lastDrop.fill(-1e9);
+  fieldBalls = []; ripples = [];
 }
 
 // ── audio: handpan synthesis (Web Audio) ─────────────────────────
 let AC = null, master = null;
 function initAudio() {
-  if (AC) return;
-  AC = new (window.AudioContext || window.webkitAudioContext)();
-  master = AC.createGain(); master.gain.value = 0.5;
-  const comp = AC.createDynamicsCompressor();
-  comp.threshold.value = -18; comp.ratio.value = 6;
-  master.connect(comp); comp.connect(AC.destination);
+  if (!AC) {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.55;
+    const comp = AC.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.ratio.value = 6;
+    master.connect(comp); comp.connect(AC.destination);
+  }
+  if (AC.state === 'suspended') AC.resume();
+  audioOn = true;
   document.getElementById('audioHint').textContent = '🔊 sound on';
+  const sg = document.getElementById('soundGate');
+  if (sg) sg.style.display = 'none';
 }
-document.addEventListener('pointerdown', initAudio, { once: false });
-document.addEventListener('keydown', initAudio, { once: false });
+document.getElementById('soundGate').addEventListener('pointerdown', initAudio);
+document.addEventListener('pointerdown', e => { if (!audioOn) initAudio(); });
+document.addEventListener('keydown', () => { if (!audioOn) initAudio(); });
 
 function playHandpan(freq) {
-  if (!AC) return;
+  if (!AC || AC.state !== 'running') return;
   const t0 = AC.currentTime;
-  // handpan partials: fundamental, octave, octave+fifth
   const partials = [[1.0, 1.0, 2.6], [2.0, 0.4, 2.1], [2.98, 0.18, 1.5]];
   for (const [ratio, amp, dec] of partials) {
     const o = AC.createOscillator();
@@ -201,7 +247,6 @@ function playHandpan(freq) {
     o.connect(g); g.connect(master);
     o.start(t0); o.stop(t0 + dec + 0.1);
   }
-  // soft mallet transient
   const nb = AC.createBuffer(1, AC.sampleRate * 0.03, AC.sampleRate);
   const d = nb.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
@@ -213,96 +258,149 @@ function playHandpan(freq) {
   ns.start(t0);
 }
 
-// ── drop logic ───────────────────────────────────────────────────
+function strike(lane) {
+  hammerSwing[lane] = 1; toneFlash[lane] = 1; laneGlow[lane] = 1;
+  ripples.push({ lane, age: 0 });
+  noteCount++;
+  playHandpan(NOTES[lane].freq);
+}
+
+// ── drop logic (balls come from the hopper — never created) ─────
 function dropBall(lane) {
+  if (hopper[lane].length === 0) return false;
+  hopper[lane].shift();
   fieldBalls.push({ lane, x: laneCx(lane), y: BALL_START_Y, vy: 0 });
-  lastDrop[lane] = songMs;
+  return true;
+}
+
+// ── paths ────────────────────────────────────────────────────────
+const TRAY_Y = INSTR_Y + INSTR_H - 20;
+const FEED_P0 = [LANE_X + LANE_W_AREA - 8, TRAY_Y];              // tray right end
+const FEED_P1 = [WHEEL_CX + WHEEL_R * Math.cos(ENTRY_ANG), WHEEL_CY + WHEEL_R * Math.sin(ENTRY_ANG)];
+const EJECT_PT = [WHEEL_CX + WHEEL_R * Math.cos(EXIT_ANG), WHEEL_CY + WHEEL_R * Math.sin(EXIT_ANG)];
+const RET_P0 = EJECT_PT;
+const RET_P1 = [WHEEL_CX - WHEEL_R - 26, WHEEL_CY + WHEEL_R + 34];
+const RET_P2 = [LIFT_CX + HELIX_AMP + 20, RAMP_BOT - 6];
+
+function bez3(a, b, c, t) {
+  const u = 1 - t;
+  return [u * u * a[0] + 2 * u * t * b[0] + t * t * c[0],
+          u * u * a[1] + 2 * u * t * b[1] + t * t * c[1]];
 }
 
 function step(dt) {
   songMs += dt * 1000;
-  phase += 45 * 2 * Math.PI / 60 * dt;   // 45 RPM base
+  phase += 45 * 2 * Math.PI / 60 * dt;
+  wheelAng += ovfRate * 45 * 2 * Math.PI / 60 * dt;
 
-  // schedule song drops
+  // schedule song drops (deferred until a ball is available in the hopper)
   while (songIdx < SONG.events.length) {
     const [lane, st] = SONG.events[songIdx];
-    if (songMs >= st - FALL_MS && songMs - lastDrop[lane] >= MIN_GAP) {
-      dropBall(lane); songIdx++;
+    if (songMs >= st - FALL_MS) {
+      if (dropBall(lane)) songIdx++;
+      else if (songMs > st + 260) songIdx++;   // give up after 260 ms
+      break;
     } else break;
   }
 
-  // falling balls
+  // falling balls → strike line
   const survivors = [];
   for (const b of fieldBalls) {
     b.vy += G_PX * dt; b.y += b.vy * dt;
     if (b.y >= BALL_HIT_Y) {
       if (gate === 'play') {
-        laneGlow[b.lane] = 1; hammerGlow[b.lane] = 1; hammerPlunge[b.lane] = 1;
-        playHandpan(NOTES[b.lane].freq);
-        noteCount++;
-        liftBalls.push({ p: 0, helix: noteCount % 2, lane: b.lane });
+        strike(b.lane);
+        trayBalls.push({ x: b.x, tx: LANE_X + 30, lane: b.lane, t: 0, dest: 'lift' });
       } else {
-        laneGlow[b.lane] = Math.max(laneGlow[b.lane], 0.25); // dim pass-through
-        ovflBalls.push({ p: 1, helix: noteCount % 2, lane: b.lane });
+        laneGlow[b.lane] = Math.max(laneGlow[b.lane], 0.25);
         noteCount++;
+        trayBalls.push({ x: b.x, tx: FEED_P0[0], lane: b.lane, t: 0, dest: 'wheel' });
       }
     } else survivors.push(b);
   }
   fieldBalls = survivors;
 
-  // decay glows
+  // tray: roll to destination, then hand off
+  const trayLeft = [];
+  for (const b of trayBalls) {
+    b.t += dt / 0.55;
+    b.x += (b.tx - b.x) * Math.min(1, dt * 6);
+    if (b.t >= 1) {
+      if (b.dest === 'lift') liftBalls.push({ p: 0, helix: noteCount % 2, lane: b.lane });
+      else feedBalls.push({ t: 0, lane: b.lane });
+    } else trayLeft.push(b);
+  }
+  trayBalls = trayLeft;
+
+  // feed ramp → wheel pocket
+  const feedLeft = [];
+  for (const b of feedBalls) {
+    b.t += dt / 0.5;
+    if (b.t >= 1) wheelBalls.push({ ang: ENTRY_ANG, lane: b.lane });
+    else feedLeft.push(b);
+  }
+  feedBalls = feedLeft;
+
+  // 1982 wheel: carry CCW from entry to eject
+  const wSpeed = ovfRate * 45 * 2 * Math.PI / 60;
+  const wheelLeft = [];
+  for (const b of wheelBalls) {
+    b.ang += wSpeed * dt;
+    if (b.ang >= EXIT_ANG) retBalls.push({ t: 0, lane: b.lane });
+    else wheelLeft.push(b);
+  }
+  wheelBalls = wheelLeft;
+
+  // return chute → lift base
+  const retLeft = [];
+  for (const b of retBalls) {
+    b.t += dt / 0.8;
+    if (b.t >= 1) liftBalls.push({ p: 0, helix: (noteCount + b.lane) % 2, lane: b.lane });
+    else retLeft.push(b);
+  }
+  retBalls = retLeft;
+
+  // lift: carry balls up
+  const up = LIFT_SPEED * dt;
+  const stillLifting = [];
+  for (const b of liftBalls) {
+    b.p += up;
+    if (b.p >= 1.0) {
+      if (hopper[b.lane].length < HOPPER_MAX) hopper[b.lane].push({});
+      else feedBalls.push({ t: 0, lane: b.lane });   // true overflow → 1982 wheel
+    } else stillLifting.push(b);
+  }
+  liftBalls = stillLifting;
+
+  // decay visuals
   for (let i = 0; i < NUM_LANES; i++) {
     laneGlow[i] = Math.max(0, laneGlow[i] - dt * 1.8);
-    hammerGlow[i] = Math.max(0, hammerGlow[i] - dt * 2.2);
-    hammerPlunge[i] = Math.max(0, hammerPlunge[i] - dt * 9);
+    toneFlash[i] = Math.max(0, toneFlash[i] - dt * 2.6);
+    hammerSwing[i] = Math.max(0, hammerSwing[i] - dt * 7);
   }
-
-  // helix ball transport
-  const up = LIFT_SPEED * dt;
-  liftBalls = liftBalls.filter(b => { b.p += up; return b.p < 1.0; });
-  // lift arrivals respawn at their lane top (closed loop)
-  for (const b of liftBalls) if (b.p >= 1.0) {}
-  liftBalls = liftBalls.filter(b => {
-    if (b.p >= 1.0) {
-      // deliver to lane top with slight stagger
-      if (songMs - lastDrop[b.lane] > 200) {
-        fieldBalls.push({ lane: b.lane, x: laneCx(b.lane), y: BALL_START_Y, vy: 0 });
-        lastDrop[b.lane] = songMs;
-      }
-      return false;
-    }
-    return true;
-  });
-
-  const down = LIFT_SPEED * ovfRate * dt;
-  ovflBalls = ovflBalls.filter(b => {
-    b.p -= down;
-    if (b.p <= 0) {
-      // overflow exit feeds back into lift ramp (closed loop)
-      liftBalls.push({ p: 0, helix: (noteCount + b.lane) % 2, lane: b.lane });
-      return false;
-    }
-    return true;
-  });
-
-  // keep a gentle ambient trickle on the overflow so the ramp is alive
-  if (Math.random() < dt * 0.35 && ovflBalls.length < 6) {
-    ovflBalls.push({ p: 1, helix: Math.floor(Math.random() * 2), lane: Math.floor(Math.random() * NUM_LANES) });
-  }
+  ripples = ripples.filter(r => (r.age += dt) < 0.7);
 }
 
-// ── drawing helpers ──────────────────────────────────────────────
+// ── drawing ──────────────────────────────────────────────────────
 function rgb(c, a) { return a === undefined ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
 
-function drawHelix(cx, goingUp, balls, label) {
+function drawBall(x, y, col, r) {
+  r = r || BALL_R;
+  ctx.beginPath(); ctx.arc(x + 2, y + 2, r, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = rgb(col); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - r / 3, y - r / 3, r / 3, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+function drawHelix(cx, balls, label) {
   const cols = [[70, 150, 255], [255, 165, 50]];
   const dims = [[18, 38, 65], [65, 42, 13]];
   for (let hx = 0; hx < 2; hx++) {
     const pts = [];
     for (let si = 0; si <= HELIX_SEGS; si++) {
       const p = si / HELIX_SEGS;
-      let ang = p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase);
-      if (hx === 1) ang = -(p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase)) + Math.PI;
+      let ang = p * HELIX_TURNS * 2 * Math.PI + phase;
+      if (hx === 1) ang = -(p * HELIX_TURNS * 2 * Math.PI + phase) + Math.PI;
       pts.push([cx + HELIX_AMP * Math.sin(ang), RAMP_BOT - p * RAMP_HEIGHT, Math.cos(ang)]);
     }
     for (const front of [false, true]) {
@@ -310,41 +408,122 @@ function drawHelix(cx, goingUp, balls, label) {
       ctx.strokeStyle = rgb(front ? cols[hx] : dims[hx]);
       ctx.beginPath();
       let started = false;
-      for (let si = 0; si < pts.length; si++) {
-        const onFront = pts[si][2] > 0;
-        if (onFront === front) {
-          if (!started) { ctx.moveTo(pts[si][0], pts[si][1]); started = true; }
-          else ctx.lineTo(pts[si][0], pts[si][1]);
+      for (const pt of pts) {
+        if ((pt[2] > 0) === front) {
+          if (!started) { ctx.moveTo(pt[0], pt[1]); started = true; }
+          else ctx.lineTo(pt[0], pt[1]);
         } else started = false;
       }
       ctx.stroke();
     }
   }
-  // balls riding the helix
   for (const b of balls) {
-    let ang = b.p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase);
-    if (b.helix === 1) ang = -(b.p * HELIX_TURNS * 2 * Math.PI + (goingUp ? phase : -phase)) + Math.PI;
+    let ang = b.p * HELIX_TURNS * 2 * Math.PI + phase;
+    if (b.helix === 1) ang = -(b.p * HELIX_TURNS * 2 * Math.PI + phase) + Math.PI;
     const bx = cx + HELIX_AMP * Math.sin(ang);
     const by = RAMP_BOT - b.p * RAMP_HEIGHT;
-    const z = Math.cos(ang);
-    if (z < -0.4) continue;
-    const r = Math.max(5, BALL_R * 0.62 + z * 3.5);
-    const c = NOTES[b.lane].col;
-    ctx.beginPath(); ctx.arc(bx + 1, by + 1, r, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(bx, by, r, 0, 7); ctx.fillStyle = rgb(c); ctx.fill();
-    ctx.beginPath(); ctx.arc(bx - r / 3, by - r / 3, r / 3, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fill();
+    if (Math.cos(ang) < -0.4) continue;
+    drawBall(bx, by, NOTES[b.lane].col, Math.max(5, BALL_R * 0.62 + Math.cos(ang) * 3.5));
   }
-  // motor
-  const my = RAMP_BOT + 30;
-  ctx.beginPath(); ctx.arc(cx, my, 18, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
+  const my = RAMP_BOT + 26;
+  ctx.beginPath(); ctx.arc(cx, my, 16, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = '#34425a'; ctx.stroke();
-  const dir = goingUp ? 1 : -1;
   ctx.beginPath(); ctx.moveTo(cx, my);
-  ctx.lineTo(cx + 14 * Math.cos(phase * dir), my + 14 * Math.sin(phase * dir));
-  ctx.strokeStyle = goingUp ? '#5aaaff' : '#ffa050'; ctx.lineWidth = 3; ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx, my, 4, 0, 7); ctx.fillStyle = goingUp ? '#468cdc' : '#dc8c46'; ctx.fill();
+  ctx.lineTo(cx + 12 * Math.cos(phase), my + 12 * Math.sin(phase));
+  ctx.strokeStyle = '#5aaaff'; ctx.lineWidth = 3; ctx.stroke();
   ctx.font = '10px monospace'; ctx.fillStyle = '#5f7396'; ctx.textAlign = 'center';
-  ctx.fillText(label, cx, my + 32);
+  ctx.fillText(label, cx, my + 30);
+}
+
+function drawWheel() {
+  const cx = WHEEL_CX, cy = WHEEL_CY, R = WHEEL_R;
+  // stand
+  ctx.strokeStyle = '#232c3d'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, RAMP_BOT); ctx.stroke();
+  ctx.fillStyle = '#1a2233'; ctx.fillRect(cx - 26, RAMP_BOT - 4, 52, 8);
+  // wheel rim
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7);
+  ctx.fillStyle = 'rgba(16,21,31,.85)'; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#3a4a64'; ctx.stroke();
+  // six curved pocket segments (spiral blades)
+  for (let k = 0; k < WHEEL_POCKETS; k++) {
+    const a0 = wheelAng + k * Math.PI * 2 / WHEEL_POCKETS;
+    ctx.beginPath();
+    for (let s = 0; s <= 20; s++) {
+      const t = s / 20;
+      const a = a0 + t * 0.85;
+      const r = R * 0.28 + t * R * 0.66;
+      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  // spokes
+  for (let k = 0; k < WHEEL_POCKETS; k++) {
+    const a = wheelAng + k * Math.PI * 2 / WHEEL_POCKETS;
+    ctx.beginPath(); ctx.moveTo(cx + R * 0.2 * Math.cos(a), cy + R * 0.2 * Math.sin(a));
+    ctx.lineTo(cx + R * 0.97 * Math.cos(a), cy + R * 0.97 * Math.sin(a));
+    ctx.strokeStyle = '#2c3a52'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  // hub with rotation marker
+  ctx.beginPath(); ctx.arc(cx, cy, 10, 0, 7); ctx.fillStyle = '#202a38'; ctx.fill();
+  ctx.strokeStyle = '#4a5a7d'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + 9 * Math.cos(wheelAng), cy + 9 * Math.sin(wheelAng));
+  ctx.strokeStyle = '#ffa050'; ctx.lineWidth = 2.5; ctx.stroke();
+  // CCW motion arrow
+  ctx.beginPath(); ctx.arc(cx, cy, R + 14, -0.4, -1.6, true);
+  ctx.strokeStyle = 'rgba(232,197,106,.5)'; ctx.lineWidth = 2; ctx.stroke();
+  const ah = -1.6;
+  ctx.beginPath();
+  ctx.moveTo(cx + (R + 14) * Math.cos(ah), cy + (R + 14) * Math.sin(ah));
+  ctx.lineTo(cx + (R + 20) * Math.cos(ah - 0.18), cy + (R + 20) * Math.sin(ah - 0.18));
+  ctx.lineTo(cx + (R + 8) * Math.cos(ah - 0.22), cy + (R + 8) * Math.sin(ah - 0.22));
+  ctx.closePath(); ctx.fillStyle = 'rgba(232,197,106,.6)'; ctx.fill();
+  // two magnets with red force arrows (as drawn in 1982)
+  for (const ma of [MAG_A, MAG_B]) {
+    const mx = cx + (R + 26) * Math.cos(ma), myy = cy + (R + 26) * Math.sin(ma);
+    ctx.save(); ctx.translate(mx, myy); ctx.rotate(ma + Math.PI / 2);
+    ctx.fillStyle = '#5a3030'; ctx.fillRect(-12, -7, 24, 14);
+    ctx.fillStyle = '#c05050'; ctx.fillRect(-12, -7, 12, 14);
+    ctx.strokeStyle = '#7d4040'; ctx.lineWidth = 1; ctx.strokeRect(-12, -7, 24, 14);
+    ctx.restore();
+    ctx.strokeStyle = '#e05050'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(mx, myy);
+    ctx.lineTo(cx + (R + 6) * Math.cos(ma), cy + (R + 6) * Math.sin(ma)); ctx.stroke();
+  }
+  // pocket balls
+  for (const b of wheelBalls) {
+    const r = R * 0.28 + ((b.ang - ENTRY_ANG) / (EXIT_ANG - ENTRY_ANG)) * R * 0.6;
+    drawBall(cx + r * Math.cos(b.ang), cy + r * Math.sin(b.ang), NOTES[b.lane].col, 9);
+  }
+  // feed ramp (tray → lower-right of wheel)
+  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(FEED_P0[0], FEED_P0[1]); ctx.lineTo(FEED_P1[0], FEED_P1[1]); ctx.stroke();
+  ctx.strokeStyle = '#2e2418'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(FEED_P0[0], FEED_P0[1] - 4); ctx.lineTo(FEED_P1[0], FEED_P1[1] - 4); ctx.stroke();
+  for (const b of feedBalls) {
+    const x = FEED_P0[0] + (FEED_P1[0] - FEED_P0[0]) * b.t;
+    const y = FEED_P0[1] + (FEED_P1[1] - FEED_P0[1]) * b.t - 7;
+    drawBall(x, y, NOTES[b.lane].col, 9);
+  }
+  // return chute (eject → lift base)
+  ctx.strokeStyle = '#54432a'; ctx.lineWidth = 5;
+  ctx.beginPath();
+  for (let s = 0; s <= 24; s++) {
+    const p = bez3(RET_P0, RET_P1, RET_P2, s / 24);
+    if (s === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+  }
+  ctx.stroke();
+  for (const b of retBalls) {
+    const p = bez3(RET_P0, RET_P1, RET_P2, b.t);
+    drawBall(p[0], p[1] - 6, NOTES[b.lane].col, 9);
+  }
+  ctx.font = '9px monospace'; ctx.fillStyle = '#8a7340'; ctx.textAlign = 'center';
+  ctx.fillText('RUBIN 1982', cx, RAMP_BOT + 14);
+  ctx.fillText('OVERFLOW MACHINE', cx, RAMP_BOT + 26);
+  ctx.fillStyle = '#5c6c88';
+  ctx.fillText(`${(ovfRate * 45).toFixed(0)} RPM`, cx, cy + 4);
 }
 
 function draw() {
@@ -354,8 +533,7 @@ function draw() {
   ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#8c9ebe'; ctx.textAlign = 'left';
   ctx.fillText('HONEYLIGHT MARBLE QUIPU  ·  Rubin Lifting Ramp  ·  10 lanes  ·  0.25 HP  ·  ALIENPAN D Kurd', 12, 22);
   ctx.font = '11px monospace'; ctx.fillStyle = '#5c6c88';
-  ctx.fillText('golf balls · twin counter-rotating helix · gate control · tunable overflow', 12, 38);
-  // song progress
+  ctx.fillText(`golf balls · twin helix lift · gate control · 1982 overflow wheel · supply ${SUPPLY} = 110% of max ${MAX_DEMAND}`, 12, 38);
   const pct = Math.min(1, Math.max(0, songMs / SONG.totalMs));
   ctx.fillStyle = '#101620'; ctx.fillRect(LANE_X, 46, LANE_W_AREA, 3);
   ctx.fillStyle = '#327dc3'; ctx.fillRect(LANE_X, 46, LANE_W_AREA * pct, 3);
@@ -371,7 +549,7 @@ function draw() {
       ctx.fillStyle = rgb(c, Math.min(1, laneGlow[i])); ctx.fill();
       if (laneGlow[i] > 0.35) {
         ctx.beginPath(); ctx.arc(cx, cy, 13, 0, 7);
-        ctx.strokeStyle = rgb(c, laneGlow[i] * 0.4); ctx.lineWidth = 2; ctx.stroke();
+        ctx.strokeStyle = rgb(c, laneGlow[i] * 0.5); ctx.lineWidth = 2; ctx.stroke();
       }
     }
     ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 7); ctx.strokeStyle = '#10141c'; ctx.lineWidth = 1; ctx.stroke();
@@ -379,81 +557,124 @@ function draw() {
     ctx.fillText(NOTES[i].name, cx, cy + 3);
   }
 
-  // lane frame
+  // lane frame + dividers + glow wash
   ctx.strokeStyle = '#1c2430'; ctx.lineWidth = 2;
   ctx.strokeRect(LANE_X, LANE_Y, LANE_W_AREA, LANE_H);
-
-  // lane dividers + glow wash
   for (let i = 0; i < NUM_LANES; i++) {
     const lx = LANE_X + i * LANE_W;
     if (i > 0) { ctx.strokeStyle = '#10151e'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(lx, LANE_Y); ctx.lineTo(lx, HAMMER_Y - 16); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(lx, LANE_Y); ctx.lineTo(lx, INSTR_Y - 6); ctx.stroke(); }
     if (laneGlow[i] > 0.04) {
-      ctx.fillStyle = rgb(NOTES[i].col, laneGlow[i] * 0.06);
-      ctx.fillRect(lx + 1, LANE_Y, LANE_W - 2, LANE_H - 22);
+      ctx.fillStyle = rgb(NOTES[i].col, laneGlow[i] * 0.07);
+      ctx.fillRect(lx + 1, LANE_Y, LANE_W - 2, LANE_H - 4);
+    }
+    // hopper dots at lane top
+    for (let k = 0; k < hopper[i].length; k++) {
+      ctx.beginPath(); ctx.arc(laneCx(i), LANE_Y + 12 + k * 13, 5.5, 0, 7);
+      ctx.fillStyle = rgb(NOTES[i].col, 0.85); ctx.fill();
+      ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
     }
   }
 
-  // ramps
-  drawHelix(LIFT_CX, true, liftBalls, 'LIFT ↑ 132 RPM');
-  drawHelix(OVFL_CX, false, ovflBalls, `OVERFLOW ↓ ${(ovfRate * 45).toFixed(0)} RPM`);
+  // lift ramp (left)
+  drawHelix(LIFT_CX, liftBalls, 'LIFT ↑ 132 RPM');
+  // 1982 overflow machine (right)
+  drawWheel();
 
-  // return tray with routing
-  const ty = HAMMER_Y + 24;
-  ctx.fillStyle = '#141c28';
-  ctx.beginPath(); ctx.roundRect(LANE_X - 6, ty, LANE_W_AREA + 12, 8, 3); ctx.fill();
-  ctx.strokeStyle = gate === 'play' ? '#1e4030' : '#402020'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(LANE_X, ty + 4); ctx.lineTo(LIFT_CX + HELIX_AMP, ty + 4); ctx.stroke();
-  ctx.strokeStyle = gate === 'bypass' ? '#7d3535' : '#19222e';
-  ctx.beginPath(); ctx.moveTo(LANE_X + LANE_W_AREA, ty + 4); ctx.lineTo(OVFL_CX - HELIX_AMP, ty + 4); ctx.stroke();
-  ctx.font = '10px monospace'; ctx.textAlign = 'center';
-  ctx.fillStyle = gate === 'play' ? '#4caf7d' : '#5c6c88';
-  ctx.fillText(gate === 'play' ? '◀ PLAY: balls → lift ramp (closed loop)' : '·', LANE_X + LANE_W_AREA * 0.28, ty + 20);
-  ctx.fillStyle = gate === 'bypass' ? '#e07070' : '#5c6c88';
-  ctx.fillText(gate === 'bypass' ? 'BYPASS: balls → overflow ramp ▶' : '·', LANE_X + LANE_W_AREA * 0.74, ty + 20);
+  // ── instrument strip: the ALIENPAN ─────────────────────────────
+  ctx.fillStyle = '#161210';
+  ctx.beginPath(); ctx.roundRect(LANE_X - 6, INSTR_Y, LANE_W_AREA + 12, INSTR_H, 8); ctx.fill();
+  // bronze dome sheen
+  const grad = ctx.createLinearGradient(0, INSTR_Y, 0, INSTR_Y + INSTR_H);
+  grad.addColorStop(0, 'rgba(120,84,40,.28)');
+  grad.addColorStop(0.5, 'rgba(70,50,26,.12)');
+  grad.addColorStop(1, 'rgba(30,22,12,.3)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.roundRect(LANE_X - 6, INSTR_Y, LANE_W_AREA + 12, INSTR_H, 8); ctx.fill();
+  ctx.strokeStyle = '#3d3020'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(LANE_X - 6, INSTR_Y, LANE_W_AREA + 12, INSTR_H, 8); ctx.stroke();
+  ctx.font = '9px monospace'; ctx.fillStyle = '#6b5636'; ctx.textAlign = 'left';
+  ctx.fillText('ALIENPAN · D KURD · 440 Hz · AISI 430', LANE_X + 4, INSTR_Y + INSTR_H - 8);
 
-  // field balls
-  for (const b of fieldBalls) {
-    const c = NOTES[b.lane].col;
-    ctx.beginPath(); ctx.arc(b.x + 2, b.y + 2, BALL_R, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 7); ctx.fillStyle = rgb(c); ctx.fill();
-    ctx.beginPath(); ctx.arc(b.x - BALL_R / 3, b.y - BALL_R / 3, BALL_R / 3, 0, 7); ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 7); ctx.strokeStyle = '#0c0c0f'; ctx.lineWidth = 1; ctx.stroke();
-  }
-
-  // hammers (solenoid blocks)
+  const FIELD_Y = INSTR_Y + 54;
   for (let i = 0; i < NUM_LANES; i++) {
     const cx = laneCx(i), c = NOTES[i].col;
-    const bw = LANE_W - 8, bh = 14;
-    if (hammerGlow[i] > 0.02) {
-      const pad = Math.round(8 * hammerGlow[i]);
-      ctx.fillStyle = rgb(c.map(v => Math.min(255, v * hammerGlow[i] + 15)), 0.9);
-      ctx.beginPath(); ctx.roundRect(cx - bw / 2 - pad, HAMMER_Y - bh / 2 - pad, bw + 2 * pad, bh + 2 * pad, 5); ctx.fill();
+    // tone field (handpan note ellipse)
+    ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, LANE_W * 0.34, 13, 0, 0, 7);
+    ctx.fillStyle = toneFlash[i] > 0.02 ? rgb(c, 0.25 + toneFlash[i] * 0.75) : '#241c12';
+    ctx.fill();
+    ctx.strokeStyle = toneFlash[i] > 0.02 ? rgb(c) : '#4a3a24'; ctx.lineWidth = 1.5; ctx.stroke();
+    // dimple
+    ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, 4, 2.4, 0, 0, 7);
+    ctx.fillStyle = toneFlash[i] > 0.02 ? '#fff' : '#120d08'; ctx.fill();
+    // strike ripple
+    for (const r of ripples) if (r.lane === i) {
+      const rr = 8 + r.age * 46;
+      ctx.beginPath(); ctx.ellipse(cx, FIELD_Y, rr, rr * 0.42, 0, 0, 7);
+      ctx.strokeStyle = rgb(c, Math.max(0, 0.8 - r.age * 1.3)); ctx.lineWidth = 2; ctx.stroke();
     }
+    // hammer: solenoid housing + plunger + mallet
+    const swing = hammerSwing[i];
+    // swing decays 1→0 after strike; mallet fully extended at impact (swing=1),
+    // spring-returns as swing decays
+    const plunge = Math.pow(swing, 0.6) * 16;
+    const hy = INSTR_Y + 8;
     ctx.fillStyle = '#2a303a';
-    ctx.beginPath(); ctx.roundRect(cx - bw / 2, HAMMER_Y - bh / 2, bw, bh, 3); ctx.fill();
-    const pe = Math.round(hammerPlunge[i] * 10);
-    ctx.fillStyle = hammerGlow[i] > 0.08 ? rgb(c) : '#586270';
-    ctx.beginPath(); ctx.roundRect(cx - 3, HAMMER_Y - bh / 2 - 7 + pe, 5, 9, 2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(cx - 9, hy, 18, 14, 3); ctx.fill();
+    ctx.strokeStyle = swing > 0.05 ? rgb(c) : '#3a4352'; ctx.lineWidth = 1;
+    ctx.strokeRect(cx - 9, hy, 18, 14);
+    // plunger rod
+    ctx.strokeStyle = '#8a95a5'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx, hy + 14); ctx.lineTo(cx, hy + 18 + plunge); ctx.stroke();
+    // mallet head
+    const mY = hy + 22 + plunge;
+    ctx.beginPath(); ctx.arc(cx, mY, 6, 0, 7);
+    ctx.fillStyle = swing > 0.05 ? rgb(c) : '#586270'; ctx.fill();
+    ctx.strokeStyle = '#14181f'; ctx.lineWidth = 1; ctx.stroke();
+    // impact flash
+    if (swing > 0.55) {
+      ctx.beginPath(); ctx.arc(cx, FIELD_Y - 6, 10, 0, 7);
+      ctx.fillStyle = rgb(c, (swing - 0.55) * 1.4); ctx.fill();
+    }
   }
 
+  // return tray
+  ctx.fillStyle = '#141c28';
+  ctx.beginPath(); ctx.roundRect(LANE_X - 6, TRAY_Y, LANE_W_AREA + 12, 8, 3); ctx.fill();
+  ctx.strokeStyle = gate === 'play' ? '#1e4030' : '#402020'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(LANE_X, TRAY_Y + 4); ctx.lineTo(LANE_X + LANE_W_AREA, TRAY_Y + 4); ctx.stroke();
+  ctx.font = '10px monospace'; ctx.textAlign = 'center';
+  ctx.fillStyle = gate === 'play' ? '#4caf7d' : '#e07070';
+  ctx.fillText(gate === 'play'
+    ? '◀ PLAY: strike → tray → lift (closed loop)'
+    : 'BYPASS: pass-through → tray → 1982 wheel → lift ▶',
+    LANE_X + LANE_W_AREA / 2, TRAY_Y + 20);
+  for (const b of trayBalls) drawBall(b.x, TRAY_Y - 6, NOTES[b.lane].col, 9);
+
+  // field balls (falling)
+  for (const b of fieldBalls) drawBall(b.x, b.y, NOTES[b.lane].col);
+
   // footer readouts
+  const tot = totalBalls();
   const stats = [
     ['GATE', gate === 'play' ? '▶ PLAY' : '⏭ BYPASS'],
-    ['MODE', gate === 'play' ? 'instrument live' : 'direct to overflow'],
+    ['MODE', gate === 'play' ? 'instrument live' : 'direct to 1982 wheel'],
     ['NOTES', String(noteCount)],
-    ['BALLS IN FLIGHT', String(fieldBalls.length)],
-    ['LIFT QUEUE', String(liftBalls.length)],
-    ['OVERFLOW', `${ovfRate.toFixed(1)}× · ${ovflBalls.length} balls`],
+    ['IN FLIGHT', String(fieldBalls.length)],
+    ['LIFT', String(liftBalls.length)],
+    ['HOPPERS', String(hopper.reduce((s, h) => s + h.length, 0))],
+    ['1982 WHEEL', `${(ovfRate * 45).toFixed(0)} RPM · ${wheelBalls.length}`],
+    ['SUPPLY', `${tot}/${SUPPLY} (110%)`],
   ];
   let sx = LANE_X, sy = H - FOOTER_H + 62;
   ctx.textAlign = 'left';
   for (const [k, v] of stats) {
     ctx.font = '9px monospace'; ctx.fillStyle = '#3a4a64'; ctx.fillText(k, sx, sy - 14);
     ctx.font = '12px monospace';
-    ctx.fillStyle = (k === 'GATE') ? (gate === 'play' ? '#4caf7d' : '#e07070') : '#9fb2d0';
+    ctx.fillStyle = (k === 'GATE') ? (gate === 'play' ? '#4caf7d' : '#e07070')
+      : (k === 'SUPPLY' && tot !== SUPPLY) ? '#e05050' : '#9fb2d0';
     ctx.fillText(v, sx, sy);
-    sx += Math.max(ctx.measureText(k).width, ctx.measureText(v).width) + 34;
+    sx += Math.max(ctx.measureText(k).width, ctx.measureText(v).width) + 30;
   }
 }
 
@@ -481,6 +702,11 @@ document.getElementById('ovfMinus').onclick = () => { ovfRate = Math.max(0.1, Ma
 document.getElementById('ovfPlus').onclick = () => { ovfRate = Math.min(8.0, Math.round((ovfRate + 0.1) * 10) / 10); upd(); };
 function upd() { document.getElementById('ovfReadout').textContent = ovfRate.toFixed(1) + '×'; }
 
+document.getElementById('testBtn').onclick = () => {
+  initAudio();
+  NOTES.forEach((n, i) => setTimeout(() => strike(i), i * 130));
+};
+
 const pauseBtn = document.getElementById('pauseBtn');
 pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE'; };
 document.getElementById('restartBtn').onclick = resetSong;
@@ -489,8 +715,11 @@ cv.addEventListener('pointerdown', e => {
   const rect = cv.getBoundingClientRect();
   const x = (e.clientX - rect.left) * (W / rect.width);
   const y = (e.clientY - rect.top) * (H / rect.height);
-  if (x > LANE_X && x < LANE_X + LANE_W_AREA && y > LANE_Y && y < HAMMER_Y) {
-    dropBall(Math.floor((x - LANE_X) / LANE_W));
+  if (x > LANE_X && x < LANE_X + LANE_W_AREA && y > LANE_Y && y < INSTR_Y) {
+    const lane = Math.min(NUM_LANES - 1, Math.floor((x - LANE_X) / LANE_W));
+    if (!dropBall(lane)) {
+      laneGlow[lane] = Math.max(laneGlow[lane], 0.2); // hopper empty — dim blink
+    }
   }
 });
 
