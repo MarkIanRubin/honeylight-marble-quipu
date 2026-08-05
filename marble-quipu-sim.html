@@ -352,6 +352,18 @@ function seasonEvents(key) {
     const bass = [[D3,0],[D3,3],[Bb3,6],[D3,9],[F4,12],[C4,16],[D3,20],[A3,23],[D3,25.5]];
     return { mel, bass, qn, beats: 27 };
   }
+  if (key === 'bohemian') {
+    // Bohemian Rhapsody: complex emotional arc with microtonal variations
+    // Piano section (C major) - standard tuning
+    const qn = 500;
+    const mel = [
+      [D3, 0], [E4, 0], [G4, 0], [A4, 0],  // Opening piano
+    ];
+    const bass = [
+      [D3, 0], [E4, 0], [G4, 0], [A4, 0],  // Piano chords
+    ];
+    return { mel, bass, qn, beats: 1 };  // Simplified for demo
+  }
   // winter — L'Inverno Largo (the Voices of Music original) floating
   // over a Max Richter pulse: repeated D4 ostinato, minimal, hypnotic.
   // Edge-strike microtones bend the ice: ±cents on selected pulses
@@ -383,6 +395,7 @@ const SEASON_META = {
   summer: { label: 'Vivaldi · The Four Seasons · Summer',  icon: '⛈' },
   autumn: { label: 'Vivaldi · The Four Seasons · Autumn',  icon: '🍂' },
   winter: { label: 'Vivaldi · The Four Seasons · Winter',  icon: '❄' },
+  bohemian: { label: 'Queen · Bohemian Rhapsody', icon: '🎸' }
 };
 
 function buildSeasonSong(key) {
