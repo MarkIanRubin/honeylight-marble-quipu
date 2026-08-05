@@ -88,6 +88,10 @@
   .cog-p-op { color: #8fa3c4; font-size: 11px; }
   .cog-p-doc { color: #5c6c88; font-size: 10px; margin-top: 3px; letter-spacing: .3px; }
   .cog-stub { color: #5c6c88; font-size: 12px; margin-top: 10px; line-height: 1.6; }
+  .cog-canvas-wrap { width: 100%; overflow: hidden; border-radius: 6px; margin-top: 8px; }
+  .cog-canvas-wrap canvas { display: block; width: 100%; background: #080d14; border: 1px solid #1e2a3a; border-radius: 6px; }
+  .coord-tbl-wrap { max-height: 180px; overflow-y: auto; margin-top: 6px; border: 1px solid #1a2236; border-radius: 4px; }
+  .timeline-label { color: #4a5a70; font-size: 10px; margin-top: 4px; text-align: center; }
   .obj-title { color: #e8c56a; font-size: 13px; font-weight: 700; letter-spacing: 1px; margin-top: 12px; }
   .obj-sum { color: #8fa3c4; font-size: 10.5px; margin: 6px 0 8px; }
   .obj-sum b { color: #9fb2d0; }
@@ -1410,6 +1414,396 @@ function setGate(g) {
 }
 gateBtn.onclick = () => setGate(gate === 'play' ? 'bypass' : 'play');
 
+// ── cognition panel animation state ──────────────────────────────
+let cogPanelAnim = null;
+let flowSnaps = [];                                     // HOW: ring buffer of position snapshots
+const GRID_CELLS = 100;                                 // WHERE: 100×100 coordinate grid
+// canvas dimensions for cog panels (match aspect ratio of main canvas W:H = 1440:940)
+const COG_W = 840, COG_H = Math.round(840 * 940 / 1440); // 548
+const COG_SX = COG_W / W, COG_SY = COG_H / H;        // scale factors from machine → panel canvas
+const COG_MAX_SPEED = G_PX * FALL_TIME;               // px/s — max speed at the strike line
+
+function stopCogPanelAnim() {
+  if (cogPanelAnim) { cancelAnimationFrame(cogPanelAnim); cogPanelAnim = null; }
+}
+
+// ── gather every ball's current position, velocity, and phase ────
+// Returns [{x, y, vx, vy, lane, phase}] — exact same positions as drawn on canvas
+function getBallStates() {
+  const out = [];
+  for (const b of bankBalls) {
+    const vx = b.state === 'slide' ? SLIDE_SPEED * Math.sign(b.tx - b.x) : 0;
+    out.push({ x: b.x, y: BANK_Y, vx, vy: 0, lane: b.col, phase: 'bank' });
+  }
+  for (const b of fieldBalls) {
+    out.push({ x: b.x, y: b.y, vx: 0, vy: b.vy, lane: b.lane, phase: 'fall' });
+  }
+  for (const b of bounceBalls) {
+    const p0 = BOUNCE_P0(b.x0), p1 = BOUNCE_P1(b.x0), p2 = BOUNCE_P2;
+    const p = bez3(p0, p1, p2, b.t);
+    const eps = 0.01, t2 = Math.min(1, b.t + eps);
+    const pn = bez3(p0, p1, p2, t2);
+    const rate = 1000 / BOUNCE_MS;
+    out.push({ x: p[0], y: p[1], vx: (pn[0]-p[0])/eps*rate, vy: (pn[1]-p[1])/eps*rate, lane: b.lane, phase: 'bounce' });
+  }
+  for (const b of dropBalls) {
+    out.push({ x: DROP_RAIL_X, y: (RETURN_Y-22)+b.t*22, vx: 0, vy: 22/0.30, lane: b.lane, phase: 'drop' });
+  }
+  for (const b of rollBalls) {
+    out.push({ x: b.x, y: RETURN_Y-8, vx: -RETURN_SPEED, vy: 0, lane: b.lane, phase: 'roll' });
+  }
+  for (const b of liftFeed) {
+    const tx = LFEED_P0[0]+(LFEED_P1[0]-LFEED_P0[0])*b.t;
+    const ty = LFEED_P0[1]+(LFEED_P1[1]-LFEED_P0[1])*b.t - 7;
+    const rate = 1 / 0.5;
+    out.push({ x: tx, y: ty, vx: (LFEED_P1[0]-LFEED_P0[0])*rate, vy: (LFEED_P1[1]-LFEED_P0[1])*rate, lane: b.lane, phase: 'feed' });
+  }
+  for (const b of rideBalls) {
+    const [bx, by] = ballOnLiftWheel(b);
+    const r = LWR - BALL_R * 0.4, om = wheelOmega(b.wheel);
+    out.push({ x: bx, y: by, vx: r*om*Math.sin(b.ang), vy: -r*om*Math.cos(b.ang), lane: b.lane, phase: 'ride' });
+  }
+  for (const b of bridgeBalls) {
+    let bx, by, vx = 0, vy = 0;
+    if (b.i < N_WHEELS-1) {
+      by = wheelCY(b.i)+REL_OFF-7;
+      bx = LIFT_CX+LWR+8 - b.t*(LWR+4);
+      vx = -(LWR+4)/0.3;
+    } else {
+      bx = LIFT_CX+LWR+8 + b.t*60;
+      by = TOP_BRIDGE_Y-7;
+      vx = 60/0.5;
+    }
+    out.push({ x: bx, y: by, vx, vy, lane: b.lane, phase: 'bridge' });
+  }
+  return out;
+}
+
+// ── perspective 3: WHERE — 100×100 coordinate grid + live table ──
+function startWhere() {
+  stopCogPanelAnim();
+  const canv = document.getElementById('p3cv');
+  const tbl  = document.getElementById('p3tbl');
+  if (!canv) return;
+  const pc = canv.getContext('2d');
+  const gw = COG_W / GRID_CELLS, gh = COG_H / GRID_CELLS;
+  function frame() {
+    if (!document.getElementById('p3cv')) return;  // panel switched
+    pc.clearRect(0, 0, COG_W, COG_H);
+    // machine snapshot as background
+    pc.globalAlpha = 0.82; pc.drawImage(cv, 0, 0, COG_W, COG_H); pc.globalAlpha = 1;
+    // 100×100 grid overlay
+    pc.strokeStyle = 'rgba(80,110,160,0.18)'; pc.lineWidth = 0.5;
+    for (let i = 0; i <= GRID_CELLS; i++) {
+      pc.beginPath(); pc.moveTo(i*gw, 0); pc.lineTo(i*gw, COG_H); pc.stroke();
+      pc.beginPath(); pc.moveTo(0, i*gh); pc.lineTo(COG_W, i*gh); pc.stroke();
+    }
+    // decade labels on axes (every 10)
+    pc.font = '7px monospace'; pc.fillStyle = 'rgba(100,130,180,0.55)'; pc.textAlign = 'center';
+    for (let i = 0; i <= 10; i++) {
+      pc.fillText(String(i*10), i*gw*10, COG_H - 1);
+      pc.textAlign = 'right';
+      pc.fillText(String(i*10), 16, COG_H - i*gh*10);
+      pc.textAlign = 'center';
+    }
+    // corner markers
+    pc.font = '8px monospace'; pc.fillStyle = 'rgba(232,197,106,0.7)'; pc.textAlign = 'left';
+    pc.fillText('(0,0)', 2, COG_H - 2);
+    pc.textAlign = 'right'; pc.fillText('(100,0)', COG_W-2, COG_H-2);
+    pc.fillText('(0,100)', 30, 9);
+    // balls — dot + coordinate label
+    const balls = getBallStates();
+    const rows = [];
+    balls.forEach(b => {
+      const bx = b.x * COG_SX, by = b.y * COG_SY;
+      const gx = Math.min(GRID_CELLS-1, Math.max(0, Math.floor(b.x / (W/GRID_CELLS))));
+      // Y=0 at BOTTOM LEFT: invert y
+      const gy = Math.min(GRID_CELLS-1, Math.max(0, GRID_CELLS-1-Math.floor(b.y / (H/GRID_CELLS))));
+      const c = NOTES[b.lane].col;
+      const inMotion = b.phase !== 'bank' || Math.abs(b.vx) > 2;
+      const r = inMotion ? 5.5 : 4;
+      pc.beginPath(); pc.arc(bx, by, r, 0, 7);
+      pc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${inMotion ? 0.95 : 0.55})`; pc.fill();
+      pc.strokeStyle = inMotion ? '#fff' : 'rgba(255,255,255,0.3)'; pc.lineWidth = 0.8; pc.stroke();
+      if (inMotion) {
+        pc.font = '7px monospace'; pc.textAlign = 'left';
+        pc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},1)`;
+        pc.fillText(`(${gx},${gy})`, Math.min(COG_W-36, bx+6), Math.max(8, by-2));
+      }
+      rows.push({ name: NOTES[b.lane].name, col: c, gx, gy, phase: b.phase, inMotion });
+    });
+    // Y-axis label
+    pc.save(); pc.translate(10, COG_H/2); pc.rotate(-Math.PI/2);
+    pc.font = '8px monospace'; pc.fillStyle = 'rgba(100,130,180,0.55)'; pc.textAlign = 'center';
+    pc.fillText('Y (0 = bottom)', 0, 0); pc.restore();
+    pc.font = '8px monospace'; pc.fillStyle = 'rgba(100,130,180,0.55)'; pc.textAlign = 'center';
+    pc.fillText('X (0 = left)', COG_W/2, COG_H - 1);
+    // dynamic coordinate table
+    if (tbl) {
+      let h = `<table class="obj-table" style="font-size:10px;"><tr><th>NOTE</th><th>●</th><th>GX</th><th>GY</th><th>PHASE</th></tr>`;
+      rows.forEach(r => {
+        const a = r.inMotion ? 1 : 0.45;
+        h += `<tr style="opacity:${a}"><td class="obj-note">${r.name}</td>` +
+          `<td><span class="obj-dot" style="background:rgb(${r.col[0]},${r.col[1]},${r.col[2]})"></span></td>` +
+          `<td class="obj-count">${r.gx}</td><td class="obj-count">${r.gy}</td>` +
+          `<td class="obj-note" style="font-size:9px">${r.phase}</td></tr>`;
+      });
+      tbl.innerHTML = h + '</table>';
+    }
+    cogPanelAnim = requestAnimationFrame(frame);
+  }
+  cogPanelAnim = requestAnimationFrame(frame);
+}
+
+// ── perspective 4: WHEN — scrolling 1-second timeline ────────────
+function startWhen() {
+  stopCogPanelAnim();
+  const canv = document.getElementById('p4cv');
+  if (!canv) return;
+  const tc = canv.getContext('2d');
+  const TW = 840, TH = 120;
+  const WIN_MS = 500;                                   // ±500ms = 1 second on screen
+  const PX_PER_MS = TW / (2 * WIN_MS);                 // same scroll rate as the marbles
+  const baseY = TH * 0.55;
+  function frame() {
+    if (!document.getElementById('p4cv')) return;
+    tc.clearRect(0, 0, TW, TH); tc.fillStyle = '#08101a'; tc.fillRect(0, 0, TW, TH);
+    const cx = TW / 2;
+    // thin baseline
+    tc.strokeStyle = '#283a52'; tc.lineWidth = 1.5;
+    tc.beginPath(); tc.moveTo(0, baseY); tc.lineTo(TW, baseY); tc.stroke();
+    // tick marks every 100ms
+    tc.strokeStyle = 'rgba(60,80,110,0.5)'; tc.lineWidth = 1;
+    for (let dt = -500; dt <= 500; dt += 100) {
+      const x = cx + dt * PX_PER_MS;
+      tc.beginPath(); tc.moveTo(x, baseY-6); tc.lineTo(x, baseY+6); tc.stroke();
+      tc.font = '8px monospace'; tc.fillStyle = 'rgba(70,90,120,0.7)'; tc.textAlign = 'center';
+      tc.fillText(`${dt > 0 ? '+' : ''}${dt}ms`, x, baseY + 17);
+    }
+    // events in the window: color-coded nodes at correct spacing
+    let prevX = null;
+    for (const [lane, st] of SONG.events) {
+      const dt = st - songMs;
+      if (Math.abs(dt) > WIN_MS * 1.1) continue;
+      const x = cx + dt * PX_PER_MS;
+      const isPast = dt < 0;
+      const c = NOTES[lane].col;
+      const alpha = isPast ? 0.28 : 1;
+      const r = isPast ? 4 : 7;
+      // connecting line to previous node (shows spacing)
+      if (prevX !== null && !isPast) {
+        tc.strokeStyle = 'rgba(60,80,110,0.3)'; tc.lineWidth = 1;
+        tc.beginPath(); tc.moveTo(prevX, baseY); tc.lineTo(x, baseY); tc.stroke();
+      }
+      // node
+      tc.beginPath(); tc.arc(x, baseY, r, 0, 7);
+      tc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`; tc.fill();
+      if (!isPast) { tc.strokeStyle = 'rgba(255,255,255,0.6)'; tc.lineWidth = 1; tc.stroke(); }
+      if (!isPast) {
+        // stem + label
+        tc.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},0.45)`; tc.lineWidth = 1;
+        tc.beginPath(); tc.moveTo(x, baseY - r); tc.lineTo(x, baseY - 20); tc.stroke();
+        tc.font = '8px monospace'; tc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.95)`;
+        tc.textAlign = 'center'; tc.fillText(NOTES[lane].name, x, baseY - 23);
+        prevX = x;
+      }
+    }
+    // NOW cursor
+    tc.strokeStyle = 'rgba(232,197,106,0.95)'; tc.lineWidth = 2;
+    tc.setLineDash([4, 3]);
+    tc.beginPath(); tc.moveTo(cx, 6); tc.lineTo(cx, TH-6); tc.stroke();
+    tc.setLineDash([]);
+    tc.font = 'bold 9px monospace'; tc.fillStyle = 'rgba(232,197,106,0.9)'; tc.textAlign = 'center';
+    tc.fillText('NOW', cx, 5);
+    // direction arrows
+    tc.font = '9px monospace'; tc.fillStyle = 'rgba(60,80,110,0.7)';
+    tc.textAlign = 'left';  tc.fillText('← past', 4, baseY+5);
+    tc.textAlign = 'right'; tc.fillText('future →', TW-4, baseY+5);
+    tc.font = '8px monospace'; tc.fillStyle = 'rgba(80,100,130,0.5)'; tc.textAlign = 'center';
+    tc.fillText(`scroll rate ${(PX_PER_MS * 1000).toFixed(0)} px/s · 1 second window · ${currentSeason}`, cx, TH - 3);
+    cogPanelAnim = requestAnimationFrame(frame);
+  }
+  cogPanelAnim = requestAnimationFrame(frame);
+}
+
+// ── perspective 5: HOW — velocity vectors + flowchart trail ──────
+function startHow() {
+  stopCogPanelAnim();
+  flowSnaps = [];
+  const canv = document.getElementById('p5cv');
+  if (!canv) return;
+  const hc = canv.getContext('2d');
+  let lastSnap = 0;
+  const SNAP_INTERVAL = 66;                             // ~15 fps snapshots for the trail
+  const VEC_SCALE = 0.18;                               // px on panel per px/s of machine speed
+  function frame(ts) {
+    if (!document.getElementById('p5cv')) return;
+    hc.clearRect(0, 0, COG_W, COG_H);
+    // live machine snapshot as background
+    hc.globalAlpha = 0.72; hc.drawImage(cv, 0, 0, COG_W, COG_H); hc.globalAlpha = 1;
+    const balls = getBallStates();
+    const snap = balls.map(b => ({ x: b.x*COG_SX, y: b.y*COG_SY, vx: b.vx, vy: b.vy, lane: b.lane }));
+    // collect snapshots at ~15fps
+    if (ts - lastSnap > SNAP_INTERVAL) {
+      flowSnaps.push(snap); lastSnap = ts;
+      if (flowSnaps.length > 48) flowSnaps.shift();
+    }
+    // trail: fading dots at each snapshot position (older = more faded)
+    for (let si = 0; si < flowSnaps.length - 1; si++) {
+      const alpha = (si / flowSnaps.length) * 0.55;
+      for (const b of flowSnaps[si]) {
+        if (Math.abs(b.vx) < 2 && Math.abs(b.vy) < 2) continue;
+        const c = NOTES[b.lane].col;
+        hc.beginPath(); hc.arc(b.x, b.y, 2.5, 0, 7);
+        hc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`; hc.fill();
+      }
+    }
+    // assembled flowchart arrows between consecutive snapshots (at same lane)
+    if (flowSnaps.length >= 2) {
+      for (let si = 0; si < flowSnaps.length - 1; si++) {
+        const a = (si / flowSnaps.length) * 0.7 + 0.15;
+        const s0 = flowSnaps[si], s1 = flowSnaps[si+1];
+        for (const b1 of s1) {
+          // match to nearest ball of same lane in previous snap
+          const prev = s0.filter(b => b.lane === b1.lane);
+          if (!prev.length) continue;
+          const b0 = prev.reduce((best, b) =>
+            Math.hypot(b.x-b1.x, b.y-b1.y) < Math.hypot(best.x-b1.x, best.y-b1.y) ? b : best, prev[0]);
+          const dx = b1.x - b0.x, dy = b1.y - b0.y;
+          const len = Math.hypot(dx, dy);
+          if (len < 0.8) continue;                      // didn't move — skip
+          const c = NOTES[b1.lane].col;
+          hc.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+          hc.lineWidth = a > 0.5 ? 1.5 : 1;
+          hc.beginPath(); hc.moveTo(b0.x, b0.y); hc.lineTo(b1.x, b1.y); hc.stroke();
+          // arrowhead on most recent arrows
+          if (si >= flowSnaps.length - 4) {
+            const ang = Math.atan2(dy, dx);
+            const ah = Math.min(len*0.45, 7);
+            hc.beginPath();
+            hc.moveTo(b1.x, b1.y);
+            hc.lineTo(b1.x - ah*Math.cos(ang+0.5), b1.y - ah*Math.sin(ang+0.5));
+            hc.moveTo(b1.x, b1.y);
+            hc.lineTo(b1.x - ah*Math.cos(ang-0.5), b1.y - ah*Math.sin(ang-0.5));
+            hc.stroke();
+          }
+        }
+      }
+    }
+    // current instantaneous velocity arrows (bright)
+    for (const b of balls) {
+      const bx = b.x*COG_SX, by = b.y*COG_SY;
+      const speed = Math.hypot(b.vx, b.vy);
+      if (speed < 2) continue;
+      const ex = bx + b.vx*COG_SX*VEC_SCALE, ey = by + b.vy*COG_SY*VEC_SCALE;
+      const vlen = Math.hypot(ex-bx, ey-by);
+      const c = NOTES[b.lane].col;
+      hc.strokeStyle = `rgb(${c[0]},${c[1]},${c[2]})`; hc.lineWidth = 2;
+      hc.beginPath(); hc.moveTo(bx, by); hc.lineTo(ex, ey); hc.stroke();
+      if (vlen > 4) {
+        const ang = Math.atan2(ey-by, ex-bx), ah = Math.min(vlen*0.45, 9);
+        hc.lineWidth = 1.5;
+        hc.beginPath();
+        hc.moveTo(ex, ey);
+        hc.lineTo(ex - ah*Math.cos(ang+0.48), ey - ah*Math.sin(ang+0.48));
+        hc.moveTo(ex, ey);
+        hc.lineTo(ex - ah*Math.cos(ang-0.48), ey - ah*Math.sin(ang-0.48));
+        hc.stroke();
+        // speed label on fastest movers
+        if (speed > COG_MAX_SPEED * 0.3) {
+          hc.font = '7px monospace'; hc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.9)`;
+          hc.textAlign = 'left';
+          hc.fillText(`${(speed/COG_MAX_SPEED*10).toFixed(1)} u/s`, Math.min(COG_W-30, ex+4), ey-2);
+        }
+      }
+    }
+    // legend
+    hc.font = '8px monospace'; hc.fillStyle = 'rgba(200,210,230,0.55)'; hc.textAlign = 'left';
+    hc.fillText('→ arrow = instantaneous velocity · length = distance in that snapshot · trail assembles the flowchart', 4, COG_H - 4);
+    cogPanelAnim = requestAnimationFrame(frame);
+  }
+  cogPanelAnim = requestAnimationFrame(frame);
+}
+
+// ── perspective 6: WHY — gravity × momentum scatter (all movers) ─
+// Two most important reasons things move: (1) Gravity/PE = height =
+// position in the energy cascade. (2) Momentum = current speed =
+// how much the previous interaction accelerated the ball.
+// Both scored 1–10 and plotted on a multivar scatter, updated per snapshot.
+function startWhy() {
+  stopCogPanelAnim();
+  const canv = document.getElementById('p6cv');
+  if (!canv) return;
+  const wc = canv.getContext('2d');
+  const PW = 820, PH6 = 400;
+  const padL = 52, padB = 44, padR = 24, padT = 28;
+  const plotW = PW - padL - padR, plotH = PH6 - padT - padB;
+  function frame() {
+    if (!document.getElementById('p6cv')) return;
+    wc.clearRect(0, 0, PW, PH6); wc.fillStyle = '#080d14'; wc.fillRect(0, 0, PW, PH6);
+    // axes
+    wc.strokeStyle = '#283a52'; wc.lineWidth = 1.5;
+    wc.beginPath();
+    wc.moveTo(padL, padT); wc.lineTo(padL, padT+plotH);
+    wc.lineTo(padL+plotW, padT+plotH); wc.stroke();
+    // grid + ticks
+    wc.strokeStyle = 'rgba(38,52,74,0.55)'; wc.lineWidth = 0.6;
+    wc.font = '8px monospace'; wc.fillStyle = 'rgba(70,90,120,0.7)';
+    for (let i = 1; i <= 10; i++) {
+      const gx = padL + i*plotW/10, gy = padT + (10-i)*plotH/10;
+      wc.beginPath(); wc.moveTo(gx, padT); wc.lineTo(gx, padT+plotH); wc.stroke();
+      wc.beginPath(); wc.moveTo(padL, gy); wc.lineTo(padL+plotW, gy); wc.stroke();
+      wc.textAlign = 'center'; wc.fillText(String(i), gx, padT+plotH+13);
+      wc.textAlign = 'right';  wc.fillText(String(i), padL-5, gy+3);
+    }
+    // axis labels
+    wc.font = '11px monospace'; wc.fillStyle = '#6a82a8'; wc.textAlign = 'center';
+    wc.fillText('GRAVITY  →  height above strike line  (potential energy, 1=low  10=top)', padL+plotW/2, padT+plotH+32);
+    wc.save(); wc.translate(13, padT+plotH/2); wc.rotate(-Math.PI/2);
+    wc.fillText('MOMENTUM  →  speed  (kinetic energy, 1=still  10=peak)', 0, 0); wc.restore();
+    // title
+    wc.font = 'bold 9px monospace'; wc.fillStyle = '#e8c56a'; wc.textAlign = 'left';
+    wc.fillText('WHY — top 2 drivers: Gravity × Momentum  ·  all balls in motion  ·  snapshot rate = sample clock', padL, padT - 12);
+    // plot all balls in motion
+    const balls = getBallStates();
+    const movers = balls.filter(b => b.phase !== 'bank' || Math.abs(b.vx) > 2);
+    if (!movers.length) {
+      wc.font = '11px monospace'; wc.fillStyle = 'rgba(255,255,255,0.25)'; wc.textAlign = 'center';
+      wc.fillText('no balls in motion — gate is seeding the bank', padL+plotW/2, padT+plotH/2);
+    }
+    for (const b of movers) {
+      // gravity score: canvas y increases downward; smaller y = higher up = more PE
+      // 1 = at strike line (zero PE remaining), 10 = at holding bank (full PE)
+      const gravScore = Math.max(1, Math.min(10, 1 + 9 * Math.max(0, BALL_HIT_Y - b.y) / (BALL_HIT_Y - BALL_START_Y)));
+      const speed = Math.hypot(b.vx, b.vy);
+      const momScore  = Math.max(1, Math.min(10, 1 + 9 * Math.min(1, speed / COG_MAX_SPEED)));
+      const px = padL + (gravScore-1)/9 * plotW;
+      const py = padT  + plotH - (momScore-1)/9 * plotH;
+      const c = NOTES[b.lane].col;
+      // glow ring for high-energy balls
+      if (gravScore > 7 || momScore > 7) {
+        wc.beginPath(); wc.arc(px, py, 13, 0, 7);
+        wc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.12)`; wc.fill();
+      }
+      wc.beginPath(); wc.arc(px, py, 9, 0, 7);
+      wc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.88)`; wc.fill();
+      wc.strokeStyle = 'rgba(255,255,255,0.55)'; wc.lineWidth = 1; wc.stroke();
+      wc.font = '7px monospace'; wc.fillStyle = '#fff'; wc.textAlign = 'center';
+      wc.fillText(NOTES[b.lane].name, px, py + 3);
+      // score annotation
+      wc.font = '7px monospace'; wc.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.8)`;
+      wc.textAlign = 'left';
+      wc.fillText(`g${gravScore.toFixed(1)}/m${momScore.toFixed(1)}`, Math.min(PW-36, px+11), py-6);
+    }
+    // phase legend
+    const phases = [...new Set(movers.map(b => b.phase))];
+    wc.font = '8px monospace'; wc.fillStyle = 'rgba(100,120,160,0.7)'; wc.textAlign = 'right';
+    wc.fillText(`phases in motion: ${phases.join(' · ')}`, PW - padR, padT + plotH + 32);
+    cogPanelAnim = requestAnimationFrame(frame);
+  }
+  cogPanelAnim = requestAnimationFrame(frame);
+}
+
 // ── COGNITION: six perspectives of cognition on a rotatable cube ─
 // Canon (vault: 02 Concepts/Six Perspectives of Cognition):
 // Who & What → How many → Where → When → How → Why
@@ -1687,19 +2081,41 @@ function renderPanel(f) {
       </tr>`;
     }
     html += `</table>`;
-  } else {
-    html += `<div class="cog-stub">Panel ${p.n} is a face of the cube — rotate to it and the panel loads next.<br>` +
-            `The six perspectives read the same machine: <b>Who & What</b> names the objects, ` +
-            `<b>How many</b> counts them, <b>Where</b> places them, <b>When</b> sequences them, ` +
-            `<b>How</b> flowcharts their motion, <b>Why</b> weighs the drivers.</div>`;
+  } else if (f === 2) {
+    // WHERE — 100×100 coordinate grid + live coordinate table
+    html += `<div class="obj-title">WHERE — 100 × 100 Coordinate Grid</div>
+      <div class="obj-sum">snapshot of the machine · (0,0) = bottom-left · each cell = 1% of machine area · balls shown at grid coordinate · movers labeled · table updates live</div>
+      <div class="cog-canvas-wrap"><canvas id="p3cv" width="${COG_W}" height="${COG_H}" style="height:${Math.round(COG_H*0.7)}px"></canvas></div>
+      <div class="coord-tbl-wrap" id="p3tbl"></div>`;
+  } else if (f === 3) {
+    // WHEN — scrolling 1-second horizontal timeline
+    html += `<div class="obj-title">WHEN — Scrolling 1-Second Timeline</div>
+      <div class="obj-sum">current 1-second window · NOW cursor is fixed · color-coded note nodes at correct spacing · scrolls at the same rate the marbles play · past fades, future approaches</div>
+      <div class="cog-canvas-wrap"><canvas id="p4cv" width="840" height="120" style="height:120px"></canvas></div>
+      <div class="timeline-label">← 500 ms past | NOW | 500 ms future → · node spacing = time between drops</div>`;
+  } else if (f === 4) {
+    // HOW — instantaneous velocity arrows + assembled flowchart
+    html += `<div class="obj-title">HOW — Velocity Flowchart</div>
+      <div class="obj-sum">arrow = instantaneous velocity vector · length = distance traveled in that snapshot · trail of snapshots assembles the complete flowchart of motion through the system</div>
+      <div class="cog-canvas-wrap"><canvas id="p5cv" width="${COG_W}" height="${COG_H}" style="height:${Math.round(COG_H*0.7)}px"></canvas></div>`;
+  } else if (f === 5) {
+    // WHY — gravity × momentum multivariable scatter
+    html += `<div class="obj-title">WHY — Gravity × Momentum (top 2 drivers)</div>
+      <div class="obj-sum">X = gravity score (PE height, 1=strike line → 10=holding bank) · Y = momentum score (speed, 1=still → 10=peak) · all balls in motion · both axes 1–10 · updates every snapshot</div>
+      <div class="cog-canvas-wrap"><canvas id="p6cv" width="820" height="400" style="height:280px"></canvas></div>`;
   }
   cogPanel.innerHTML = html;
   if (f === 1) startGearTrain();
+  else if (f === 2) startWhere();
+  else if (f === 3) startWhen();
+  else if (f === 4) startHow();
+  else if (f === 5) startWhy();
 }
 
 function selectPersp(f) {
   cogSel = f;
   stopGearTrain();
+  stopCogPanelAnim();
   renderPanel(f);
   applyCube();
 }
@@ -1716,6 +2132,7 @@ function closeCog() {
   cogOverlay.classList.remove('open');
   document.getElementById('cogBtn').classList.remove('active');
   stopGearTrain();
+  stopCogPanelAnim();
   if (cogTimer) { clearInterval(cogTimer); cogTimer = null; }
 }
 document.getElementById('cogBtn').onclick = () =>
