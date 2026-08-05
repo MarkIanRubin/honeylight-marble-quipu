@@ -337,20 +337,15 @@ function seasonEvents(key) {
     const bass = [[D3,0],[A3,4],[Bb3,8],[F4,12],[D3,16],[A3,18],[D3,22],[Bb3,26],[A3,30],[D3,34],[D3,35]];
     return { mel, bass, qn, beats: 36.5 };
   }
-  if (key === 'autumn') {
-    // L'Autunno — harvest dance: triadic hops and a stomping refrain.
-    const qn = 380;
+  if (key === 'chopin') {
+    // Chopin - Nocturne in E-flat
+    const qn = 500;
     const mel = [
-      [D4,0],[F4,0.5],[A4,1],[D4,1.5],[A4,2],[F4,2.5],
-      [E4,3],[G4,3.5],[C5,4],[E4,4.5],[C5,5],[G4,5.5],
-      [F4,6],[A4,6.5],[D4,7],[F4,7.5],[A4,8],[G4,8.5],
-      [F4,9],[E4,9.5],[D4,10],[E4,10.5],[F4,11],[D4,11.5],
-      [A4,12],[A4,12.5],[G4,13],[G4,13.5],[F4,14],[E4,14.5],[D4,15],[D4,15.5],
-      [C4,16],[D4,16.5],[E4,17],[F4,17.5],[G4,18],[A4,18.5],[D4,19],[D4,19.5],
-      [A4,20],[G4,20.5],[F4,21],[E4,21.5],[D4,22],[A3,23],[D4,24],[D3,25.5],
+      [E4, 0], [G4, 0.5], [B4, 1], [D5, 1.5], [E5, 2], [D5, 2.5], [B4, 3], [G4, 3.5], [E4, 4],
+      [C4, 4.5], [E4, 5], [G4, 5.5], [B4, 6], [D5, 6.5], [E5, 7], [D5, 7.5], [B4, 8], [G4, 8.5], [E4, 9],
     ];
-    const bass = [[D3,0],[D3,3],[Bb3,6],[D3,9],[F4,12],[C4,16],[D3,20],[A3,23],[D3,25.5]];
-    return { mel, bass, qn, beats: 27 };
+    const bass = [[E4, 0], [G4, 2], [E4, 4], [G4, 6], [E4, 8]];
+    return { mel, bass, qn, beats: 10 };
   }
   if (key === 'bohemian') {
     // Bohemian Rhapsody: complex emotional arc with microtonal variations
@@ -363,6 +358,76 @@ function seasonEvents(key) {
       [D3, 0], [E4, 0], [G4, 0], [A4, 0],  // Piano chords
     ];
     return { mel, bass, qn, beats: 1 };  // Simplified for demo
+  }
+  if (key === 'happy') {
+    // Happy Birthday
+    const qn = 500;
+    const mel = [
+      [C4, 0], [C4, 0.5], [D4, 1], [C4, 1.5], [F4, 2], [E4, 2.5],
+      [C4, 3], [C4, 3.5], [D4, 4], [C4, 4.5], [A4, 5], [G4, 5.5],
+    ];
+    const bass = [[C4, 0], [C4, 1], [C4, 2], [C4, 3], [C4, 4], [C4, 5]];
+    return { mel, bass, qn, beats: 6 };
+  }
+  if (key === 'u2') {
+    // U2 - With or Without You
+    const qn = 600;
+    const mel = [
+      [A3, 0], [C4, 0.5], [E4, 1], [G4, 1.5], [A4, 2], [G4, 2.5], [E4, 3], [C4, 3.5], [A3, 4],
+      [C4, 4.5], [E4, 5], [G4, 5.5], [A4, 6], [G4, 6.5], [E4, 7], [C4, 7.5], [A3, 8],
+    ];
+    const bass = [[A3, 0], [C4, 2], [E4, 4], [G4, 6], [A3, 8]];
+    return { mel, bass, qn, beats: 9 };
+  }
+  if (key === 'stones') {
+    // Rolling Stones - Paint It Black
+    const qn = 400;
+    const mel = [
+      [Bb3, 0], [D4, 0.5], [F4, 1], [Bb3, 1.5], [D4, 2], [F4, 2.5], [Bb3, 3], [D4, 3.5],
+      [F4, 4], [Bb3, 4.5], [D4, 5], [F4, 5.5], [Bb3, 6], [D4, 6.5], [F4, 7], [Bb3, 7.5],
+    ];
+    const bass = [[Bb3, 0], [D4, 2], [F4, 4], [Bb3, 6], [D4, 8]];
+    return { mel, bass, qn, beats: 9 };
+  }
+  if (key === 'led') {
+    // Led Zeppelin - Stairway to Heaven
+    const qn = 500;
+    const mel = [
+      [D4, 0], [E4, 0.5], [F4, 1], [G4, 1.5], [A4, 2], [B4, 2.5], [C5, 3], [D5, 3.5],
+      [C5, 4], [B4, 4.5], [A4, 5], [G4, 5.5], [F4, 6], [E4, 6.5], [D4, 7], [C4, 7.5],
+    ];
+    const bass = [[D4, 0], [F4, 2], [A4, 4], [C5, 6], [D4, 8]];
+    return { mel, bass, qn, beats: 9 };
+  }
+  if (key === 'twinkle') {
+    // Twinkle Twinkle Little Star
+    const qn = 500;
+    const mel = [
+      [C4, 0], [C4, 0.5], [G4, 1], [G4, 1.5], [A4, 2], [A4, 2.5], [G4, 3],
+      [F4, 4], [F4, 4.5], [E4, 5], [E4, 5.5], [D4, 6], [D4, 6.5], [C4, 7],
+    ];
+    const bass = [[C4, 0], [C4, 2], [G4, 4], [G4, 6], [C4, 8]];
+    return { mel, bass, qn, beats: 9 };
+  }
+  if (key === 'amazing') {
+    // Amazing Grace
+    const qn = 600;
+    const mel = [
+      [E4, 0], [D4, 0.5], [C4, 1], [D4, 1.5], [E4, 2], [F4, 2.5], [G4, 3],
+      [F4, 3.5], [E4, 4], [D4, 4.5], [C4, 5], [D4, 5.5], [E4, 6], [F4, 6.5], [G4, 7],
+    ];
+    const bass = [[E4, 0], [D4, 2], [C4, 4], [D4, 6], [E4, 8]];
+    return { mel, bass, qn, beats: 9 };
+  }
+  if (key === 'hallelujah') {
+    // Hallelujah
+    const qn = 500;
+    const mel = [
+      [A3, 0], [C4, 0.5], [E4, 1], [G4, 1.5], [A4, 2], [G4, 2.5], [E4, 3], [C4, 3.5], [A3, 4],
+      [C4, 4.5], [E4, 5], [G4, 5.5], [A4, 6], [G4, 6.5], [E4, 7], [C4, 7.5], [A3, 8],
+    ];
+    const bass = [[A3, 0], [C4, 2], [E4, 4], [G4, 6], [A3, 8]];
+    return { mel, bass, qn, beats: 9 };
   }
   // winter — L'Inverno Largo (the Voices of Music original) floating
   // over a Max Richter pulse: repeated D4 ostinato, minimal, hypnotic.
@@ -391,11 +456,26 @@ function seasonEvents(key) {
 }
 
 const SEASON_META = {
+  // Classical Masterpieces
   spring: { label: 'Vivaldi · The Four Seasons · Spring',  icon: '🌸' },
   summer: { label: 'Vivaldi · The Four Seasons · Summer',  icon: '⛈' },
   autumn: { label: 'Vivaldi · The Four Seasons · Autumn',  icon: '🍂' },
   winter: { label: 'Vivaldi · The Four Seasons · Winter',  icon: '❄' },
-  bohemian: { label: 'Queen · Bohemian Rhapsody', icon: '🎸' }
+  // Rock & Pop Classics
+  bohemian: { label: 'Queen · Bohemian Rhapsody', icon: '🎸' },
+  happy: { label: 'Happy Birthday', icon: '🎂' },
+  u2: { label: 'U2 · With or Without You', icon: '🎵' },
+  stones: { label: 'Rolling Stones · Paint It Black', icon: '🎸' },
+  led: { label: 'Led Zeppelin · Stairway to Heaven', icon: '🎸' },
+  // Folk & Universal
+  twinkle: { label: 'Twinkle Twinkle Little Star', icon: '⭐' },
+  amazing: { label: 'Amazing Grace', icon: '🕊️' },
+  hallelujah: { label: 'Hallelujah', icon: '🙏' },
+  // Classical
+  mozart: { label: 'Mozart · Eine kleine Nachtmusik', icon: '🎼' },
+  bach: { label: 'Bach · Minuet in G', icon: '🎼' },
+  beethoven: { label: 'Beethoven · Moonlight Sonata', icon: '🎼' },
+  chopin: { label: 'Chopin · Nocturne in E-flat', icon: '🎼' }
 };
 
 function buildSeasonSong(key) {
